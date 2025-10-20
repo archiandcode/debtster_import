@@ -67,31 +67,72 @@ func (p ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]s
 		comment   *string
 		createdAt *time.Time
 		data      map[string]string
+		warnings  []string // <— добавили: копим предупреждения для Mongo
 	}
 
 	rows := make([]row, 0, len(batch))
-	for _, m := range batch {
+
+	// Сбор валидных строк + фиксация ошибок по debt_number в Mongo
+	for i, m := range batch {
 		debtNumber := strings.TrimSpace(m["debt_number"])
 		if debtNumber == "" {
+			// нет номера долга -> failed в Mongo
+			if _, err := importitems.InsertItem(ctx, p.MG, importitems.Item{
+				ImportRecordID: importRecordID,
+				ModelType:      "actions",
+				ModelID:        uuid.NewString(),
+				Payload:        mustJSON(m),
+				Status:         "failed",
+				Errors:         "missing debt_number",
+			}); err != nil {
+				log.Printf("[PROC][actions][MONGO][ERR] row=%d missing debt_number: %v", i, err)
+			}
 			continue
 		}
 
 		debtID, err := p.getDebtUUID(ctx, debtsTable, debtNumber, debtIDCache)
 		if err != nil || debtID == nil {
+			// долг не найден -> failed в Mongo
+			msg := "debt not found: " + debtNumber
+			if err != nil {
+				msg += " (" + err.Error() + ")"
+			}
+			if _, mErr := importitems.InsertItem(ctx, p.MG, importitems.Item{
+				ImportRecordID: importRecordID,
+				ModelType:      "actions",
+				ModelID:        uuid.NewString(),
+				Payload:        mustJSON(m),
+				Status:         "failed",
+				Errors:         msg,
+			}); mErr != nil {
+				log.Printf("[PROC][actions][MONGO][ERR] row=%d debt not found: %v", i, mErr)
+			}
 			continue
 		}
 
+		var warnings []string
+
+		// username: допускаем NULL, но логируем предупреждение в Mongo (через Errors у done-записи)
 		var userID *int64
-		if un := strings.TrimSpace(m["username"]); un != "" {
-			if uid, err := p.getUserBigint(ctx, usersTable, un, userIDCache); err == nil {
+		if un := strings.TrimSpace(m["username"]); un == "" {
+			warnings = append(warnings, "missing username -> user_id=NULL")
+		} else {
+			if uid, err := p.getUserBigint(ctx, usersTable, un, userIDCache); err == nil && uid != nil {
 				userID = uid
+			} else {
+				warnings = append(warnings, "username not found: "+un+" -> user_id=NULL")
 			}
 		}
 
+		// status (shortname): допускаем NULL, но логируем предупреждение
 		var statusID *int64
-		if st := strings.TrimSpace(m["status"]); st != "" {
-			if sid, err := p.getStatusBigint(ctx, statusTable, st, statusIDCache); err == nil {
+		if st := strings.TrimSpace(m["status"]); st == "" {
+			warnings = append(warnings, "missing status -> debt_status_id=NULL")
+		} else {
+			if sid, err := p.getStatusBigint(ctx, statusTable, st, statusIDCache); err == nil && sid != nil {
 				statusID = sid
+			} else {
+				warnings = append(warnings, "status not found: "+st+" -> debt_status_id=NULL")
 			}
 		}
 
@@ -104,6 +145,7 @@ func (p ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]s
 			comment:   nullIfEmpty(m["comment"]),
 			createdAt: parseTimeLoose(m["created_at"]),
 			data:      m,
+			warnings:  warnings,
 		}
 		rows = append(rows, r)
 	}
@@ -113,6 +155,7 @@ func (p ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]s
 		return nil
 	}
 
+	// Пакетная вставка в Postgres
 	batchReq := &pgx.Batch{}
 	for _, r := range rows {
 		batchReq.Queue(
@@ -148,13 +191,15 @@ func (p ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]s
 
 		inserted++
 
+		// Успешная строка: пишем done + предупреждения (если были) в Errors
+		errText := strings.Join(r.warnings, "; ")
 		if res, mErr := importitems.InsertItem(ctx, p.MG, importitems.Item{
 			ImportRecordID: importRecordID,
 			ModelType:      "actions",
 			ModelID:        r.id,
 			Payload:        mustJSON(r.data),
 			Status:         "done",
-			Errors:         "",
+			Errors:         errText,
 		}); mErr != nil {
 			log.Printf("[PROC][actions][MONGO][ERR] row=%d id=%s status=done err=%v", i, r.id, mErr)
 		} else {
@@ -162,14 +207,10 @@ func (p ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]s
 		}
 	}
 
-	if err := br.Close(); err != nil {
-		log.Printf("[PROC][actions][ERR] close batch: %v", err)
-	}
-
 	log.Printf("[PROC][actions][DONE] total=%d inserted=%d", len(rows), inserted)
 
-	err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID)
-	if err != nil {
+	// Обновляем статус import_records -> done (как и раньше)
+	if err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID); err != nil {
 		log.Printf("[PROC][actions][ERR] error change status: %v", err)
 	}
 
