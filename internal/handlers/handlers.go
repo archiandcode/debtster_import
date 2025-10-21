@@ -27,7 +27,28 @@ func New(pg *postgres.Postgres, mg *mongo.Mongo, s3c *s3.S3) *Handlers {
 	httpClient := &http.Client{}
 
 	reg := processors.DefaultRegistry()
-	reg["actions"] = processors.ActionsProcessor{
+
+	reg["import_actions"] = processors.ActionsProcessor{
+		PG: pg,
+		MG: mg,
+	}
+	reg["import_agreements"] = processors.AgreementsProcessor{
+		PG: pg,
+		MG: mg,
+	}
+	reg["import_executive_documents"] = processors.ExecutiveDocumentsProcessor{
+		PG: pg,
+		MG: mg,
+	}
+	reg["import_enforcement_proceedings"] = processors.EnforcementProceedingsProcessor{
+		PG: pg,
+		MG: mg,
+	}
+	reg["add_payments"] = processors.PaymentsProcessor{
+		PG: pg,
+		MG: mg,
+	}
+	reg["import_user_plans"] = processors.UserPlansProcessor{
 		PG: pg,
 		MG: mg,
 	}
