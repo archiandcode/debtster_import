@@ -20,10 +20,10 @@ type AgreementsProcessor struct {
 	PG *postgres.Postgres
 	MG *mg.Mongo
 
-	AgreementsTable     string // default: "agreements"
-	AgreementTypesTable string // default: "agreement_types"
-	DebtsTable          string // default: "debts"
-	UsersTable          string // default: "users"
+	AgreementsTable     string
+	AgreementTypesTable string
+	DebtsTable          string
+	UsersTable          string
 }
 
 func (p AgreementsProcessor) Type() string { return "import_agreements" }
@@ -74,7 +74,6 @@ func (p AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 	rows := make([]row, 0, len(batch))
 
 	for i, m := range batch {
-		// ---- debt_number (проверка как в ActionsProcessor) ----
 		debtNumber := strings.TrimSpace(m["debt_number"])
 		if debtNumber == "" {
 			if _, err := importitems.InsertItem(ctx, p.MG, importitems.Item{
@@ -111,7 +110,6 @@ func (p AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 
 		var warnings []string
 
-		// ---- user (как в ActionsProcessor: допускаем NULL, но предупреждаем) ----
 		var userID *int64
 		if un := strings.TrimSpace(m["username"]); un == "" {
 			warnings = append(warnings, "missing username -> user_id=NULL")
@@ -123,7 +121,6 @@ func (p AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 			}
 		}
 
-		// ---- agreement type: upsert/поиск, допускаем NULL + warning ----
 		var agreementTypeID *int64
 		if tname := strings.TrimSpace(m["agreement_type"]); tname != "" {
 			if tid, err := p.getOrCreateAgreementType(ctx, typesTable, tname, typeIDCache); err == nil && tid != nil {
@@ -165,7 +162,6 @@ func (p AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 		return nil
 	}
 
-	// ---- batch insert ----
 	batchReq := &pgx.Batch{}
 	for _, r := range rows {
 		batchReq.Queue(
@@ -228,16 +224,12 @@ func (p AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 	return nil
 }
 
-// ---- helpers (локальные для AgreementsProcessor) ----
-
-// пытаемся найти тип; если нет — создаём; кэшируем по name (в нижнем регистре)
 func (p AgreementsProcessor) getOrCreateAgreementType(ctx context.Context, table, name string, cache map[string]*int64) (*int64, error) {
 	key := strings.ToLower(strings.TrimSpace(name))
 	if v, ok := cache[key]; ok {
 		return v, nil
 	}
 
-	// 1) SELECT
 	var id int64
 	err := p.PG.Pool.QueryRow(ctx, `SELECT id FROM `+table+` WHERE LOWER(name)=LOWER($1) LIMIT 1`, name).Scan(&id)
 	if err == nil {
@@ -245,13 +237,11 @@ func (p AgreementsProcessor) getOrCreateAgreementType(ctx context.Context, table
 		return &id, nil
 	}
 
-	// 2) INSERT ... RETURNING
 	if err = p.PG.Pool.QueryRow(ctx, `INSERT INTO `+table+` (name, created_at) VALUES ($1, NOW()) RETURNING id`, name).Scan(&id); err == nil {
 		cache[key] = &id
 		return &id, nil
 	}
 
-	// 3) Повторный SELECT (на случай гонки/дубликата)
 	if err2 := p.PG.Pool.QueryRow(ctx, `SELECT id FROM `+table+` WHERE LOWER(name)=LOWER($1) LIMIT 1`, name).Scan(&id); err2 == nil {
 		cache[key] = &id
 		return &id, nil

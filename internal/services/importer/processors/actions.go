@@ -119,7 +119,6 @@ func (p ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]s
 			}
 		}
 
-		// status (shortname): допускаем NULL, но предупреждение
 		var statusID *int64
 		if st := strings.TrimSpace(m["status"]); st == "" {
 			warnings = append(warnings, "missing status -> debt_status_id=NULL")

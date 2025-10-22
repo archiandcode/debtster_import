@@ -26,6 +26,25 @@ type Handlers struct {
 func New(pg *postgres.Postgres, mg *mongo.Mongo, s3c *s3.S3) *Handlers {
 	httpClient := &http.Client{}
 
+	reg := initProcessors(pg, mg)
+
+	return &Handlers{
+		Postgres: pg,
+		Mongo:    mg,
+		S3:       s3c,
+		HTTP:     httpClient,
+		Registry: reg,
+		Logger:   log.Default(),
+	}
+}
+
+func (h *Handlers) JSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Processor {
 	reg := processors.DefaultRegistry()
 
 	reg["import_actions"] = processors.ActionsProcessor{
@@ -52,19 +71,9 @@ func New(pg *postgres.Postgres, mg *mongo.Mongo, s3c *s3.S3) *Handlers {
 		PG: pg,
 		MG: mg,
 	}
-
-	return &Handlers{
-		Postgres: pg,
-		Mongo:    mg,
-		S3:       s3c,
-		HTTP:     httpClient,
-		Registry: reg,
-		Logger:   log.Default(),
+	reg["distribution_debts"] = processors.DistributionDebtsProcessor{
+		PG: pg,
+		MG: mg,
 	}
-}
-
-func (h *Handlers) JSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	return reg
 }
