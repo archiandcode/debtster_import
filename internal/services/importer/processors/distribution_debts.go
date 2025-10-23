@@ -37,7 +37,7 @@ type DistributionDebtsProcessor struct {
 	SystemTeamID int64
 }
 
-func (p DistributionDebtsProcessor) Type() string { return "redistribute_debts" }
+func (p DistributionDebtsProcessor) Type() string { return "distribution_debts" }
 
 func (p DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
 	if p.PG == nil || p.PG.Pool == nil {
