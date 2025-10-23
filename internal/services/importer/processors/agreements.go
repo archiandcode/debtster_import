@@ -132,7 +132,6 @@ func (p AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 			warnings = append(warnings, "missing agreement_type -> agreement_type_id=NULL")
 		}
 
-		// ---- amounts & dates ----
 		amountDebt := normalizeAmount(m["agreement_amount_debt"])
 		monthly := normalizeAmount(m["agreement_monthly_payment_amount"])
 		schedDay := nullIfEmpty(strings.TrimSpace(m["agreement_scheduled_payment_day"]))
