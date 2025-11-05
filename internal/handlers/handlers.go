@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"debtster_import/internal/repository/database"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -74,6 +75,17 @@ func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Pro
 	reg["distribution_debts"] = processors.DistributionDebtsProcessor{
 		PG: pg,
 		MG: mg,
+	}
+
+	reg["import_debtors"] = &processors.DebtorsProcessor{
+		PG: pg,
+		MG: mg,
+
+		DebtorsRepo:   database.NewDebtorRepo(pg, "debtors"),
+		DebtsRepo:     database.NewDebtsRepo(pg, "debts"),
+		AddressesRepo: database.NewAddressesRepo(pg, "addresses"),
+		PhonesRepo:    database.NewPhoneRepo(pg, "phones"),
+		//WorkplacesRepo: database.NewWorkplaceRepo(pg, "workplaces"),
 	}
 	return reg
 }
