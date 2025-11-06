@@ -17,20 +17,23 @@ import (
 	"github.com/google/uuid"
 )
 
-// DebtorsProcessor отвечает за импорт должников, долгов, адресов и телефонов
+// DebtorsProcessor отвечает за импорт должников, долгов, адресов, телефонов и контактов
 type DebtorsProcessor struct {
 	PG *postgres.Postgres
 	MG *mg.Mongo
 
-	DebtorsRepo   *database.DebtorRepo
-	DebtsRepo     *database.DebtsRepo
-	AddressesRepo *database.AddressesRepo
-	PhonesRepo    *database.PhoneRepo
+	DebtorsRepo             *database.DebtorRepo
+	DebtsRepo               *database.DebtsRepo
+	AddressesRepo           *database.AddressesRepo
+	PhonesRepo              *database.PhoneRepo
+	ContactPersonPhonesRepo *database.ContactPersonPhonesRepo
 
-	DebtorsTable   string
-	DebtsTable     string
-	AddressesTable string
-	PhonesTable    string
+	DebtorsTable             string
+	DebtsTable               string
+	AddressesTable           string
+	PhonesTable              string
+	ContactPersonPhonesTable string
+	ContactPersonsTable      string
 }
 
 func (p DebtorsProcessor) Type() string { return "import_debtors" }
@@ -144,15 +147,15 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			}
 		}
 
+		// --- 📞 Phones ---
 		if p.PhonesRepo != nil {
 			phones := []struct {
 				key    string
 				typeID int
 			}{
-				{"phones", 1},       // основной
-				{"work_phones", 2},  // рабочий
-				{"home_phones", 3},  // домашний
-				{"other_phones", 4}, // другие
+				{"phones", 1},      // основной
+				{"work_phones", 2}, // рабочий
+				{"home_phones", 3}, // домашний
 			}
 
 			for _, ph := range phones {
@@ -166,7 +169,6 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 					SubjectID:   debtor.ID,
 					PhonesRaw:   raw,
 					TypeID:      &ph.typeID,
-					IIN:         iin,
 					CreatedAt:   nowPtr(),
 					UpdatedAt:   nowPtr(),
 				}
@@ -178,6 +180,23 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			}
 		}
 
+		// --- 👥 Contact Person Phones --- (временно отключено)
+
+		if p.ContactPersonPhonesRepo != nil {
+			raw := strings.TrimSpace(m["contact_person_phones"])
+			if raw != "" {
+				contactRow := database.ContactPersonPhoneRow{
+					DebtorID: debtor.ID,
+					Value:    raw,
+				}
+				if err := p.ContactPersonPhonesRepo.SaveContactPersonPhones(ctx, contactRow); err != nil {
+					log.Printf("[PROC][contact_phones][ERR] iin=%s value=%s: %v", iin, raw, err)
+					logMongoFail(ctx, p.MG, importRecordID, "contact_person_phones", uuid.NewString(), m, err.Error())
+				}
+			}
+		}
+
+		// --- Log import item ---
 		status := "done"
 		if !ok {
 			status = "skipped"

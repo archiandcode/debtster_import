@@ -81,10 +81,11 @@ func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Pro
 		PG: pg,
 		MG: mg,
 
-		DebtorsRepo:   database.NewDebtorRepo(pg, "debtors"),
-		DebtsRepo:     database.NewDebtsRepo(pg, "debts"),
-		AddressesRepo: database.NewAddressesRepo(pg, "addresses"),
-		PhonesRepo:    database.NewPhoneRepo(pg, "phones"),
+		DebtorsRepo:             database.NewDebtorRepo(pg, "debtors"),
+		DebtsRepo:               database.NewDebtsRepo(pg, "debts"),
+		AddressesRepo:           database.NewAddressesRepo(pg, "addresses"),
+		PhonesRepo:              database.NewPhoneRepo(pg, "phones"),
+		ContactPersonPhonesRepo: database.NewContactPersonPhonesRepo(pg, "phones", "contact_persons"),
 		//WorkplacesRepo: database.NewWorkplaceRepo(pg, "workplaces"),
 	}
 	return reg

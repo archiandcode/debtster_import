@@ -77,7 +77,7 @@ func (r *AddressesRepo) SaveAddress(ctx context.Context, row AddressRow) error {
 				id, subject_type, subject_id, address, type_id, created_at, updated_at
 			) VALUES (
 				gen_random_uuid(),
-				'App\\Infrastructure\\Persistence\\Models\\Debtor',
+				'App\Infrastructure\Persistence\Models\Debtor',
 				$1, $2, $3, NOW(), NOW()
 			)
 		`, r.table)

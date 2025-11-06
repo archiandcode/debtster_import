@@ -26,7 +26,6 @@ type PhoneRow struct {
 	SubjectID   string
 	PhonesRaw   string
 	TypeID      *int
-	IIN         string
 	CreatedAt   *time.Time
 	UpdatedAt   *time.Time
 }
@@ -34,7 +33,6 @@ type PhoneRow struct {
 func (r *PhoneRepo) SavePhones(ctx context.Context, row PhoneRow) error {
 	row.PhonesRaw = strings.TrimSpace(row.PhonesRaw)
 	row.SubjectType = strings.TrimSpace(row.SubjectType)
-	row.IIN = strings.TrimSpace(row.IIN)
 
 	if row.PhonesRaw == "" || row.SubjectType == "" || row.SubjectID == "" {
 		return nil
@@ -51,18 +49,14 @@ func (r *PhoneRepo) SavePhones(ctx context.Context, row PhoneRow) error {
 
 		query := `
 			INSERT INTO ` + r.table + ` (
-				id, subject_type, subject_id, phone, type_id, iin, created_at, updated_at
+				id, subject_type, subject_id, phone, type_id, created_at, updated_at
 			) VALUES (
-				gen_random_uuid(), $1, $2, $3, $4, $5, NOW(), NOW()
+				gen_random_uuid(), $1, $2, $3, $4,  NOW(), NOW()
 			)
-			ON CONFLICT (subject_type, subject_id, phone) DO UPDATE SET
-				type_id = COALESCE(EXCLUDED.type_id, ` + r.table + `.type_id),
-				iin = COALESCE(NULLIF(EXCLUDED.iin, ''), ` + r.table + `.iin),
-				updated_at = NOW()
 		`
 
 		_, err := r.pg.Pool.Exec(ctx, query,
-			row.SubjectType, row.SubjectID, phone, row.TypeID, row.IIN,
+			row.SubjectType, row.SubjectID, phone, row.TypeID,
 		)
 		if err != nil {
 			return err
