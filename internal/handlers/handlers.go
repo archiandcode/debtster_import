@@ -77,6 +77,11 @@ func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Pro
 		MG: mg,
 	}
 
+	reg["update_debts"] = processors.UpdateDebtsProcessor{
+		PG: pg,
+		MG: mg,
+	}
+
 	reg["import_debtors"] = &processors.DebtorsProcessor{
 		PG: pg,
 		MG: mg,
