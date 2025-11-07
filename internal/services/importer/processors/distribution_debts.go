@@ -209,8 +209,10 @@ func (p DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []ma
 		b := &pgx.Batch{}
 		b.Queue(
 			`UPDATE `+debtsTable+` d
-			   SET user_id = $2
-			 WHERE d.id = $1::uuid AND (d.user_id IS DISTINCT FROM $2)`,
+       SET user_id = $2,
+           user_assigned_at = NOW()
+     WHERE d.id = $1::uuid
+       AND (d.user_id IS DISTINCT FROM $2)`,
 			r.debtID, r.userID,
 		)
 		b.Queue(
