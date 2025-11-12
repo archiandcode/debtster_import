@@ -48,50 +48,44 @@ func (h *Handlers) JSON(w http.ResponseWriter, code int, v any) {
 func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Processor {
 	reg := processors.DefaultRegistry()
 
-	reg["import_actions"] = processors.ActionsProcessor{
-		PG: pg,
-		MG: mg,
+	base := processors.NewBaseProcessor(pg, mg)
+
+	reg["import_actions"] = &processors.ActionsProcessor{
+		BaseProcessor: base,
 	}
-	reg["import_agreements"] = processors.AgreementsProcessor{
-		PG: pg,
-		MG: mg,
+	reg["import_agreements"] = &processors.AgreementsProcessor{
+		BaseProcessor: base,
 	}
-	reg["import_executive_documents"] = processors.ExecutiveDocumentsProcessor{
-		PG: pg,
-		MG: mg,
+	reg["import_executive_documents"] = &processors.ExecutiveDocumentsProcessor{
+		BaseProcessor: base,
 	}
-	reg["import_enforcement_proceedings"] = processors.EnforcementProceedingsProcessor{
-		PG: pg,
-		MG: mg,
+	reg["import_enforcement_proceedings"] = &processors.EnforcementProceedingsProcessor{
+		BaseProcessor: base,
 	}
-	reg["add_payments"] = processors.PaymentsProcessor{
-		PG: pg,
-		MG: mg,
+	reg["add_payments"] = &processors.PaymentsProcessor{
+		BaseProcessor: base,
 	}
-	reg["import_user_plans"] = processors.UserPlansProcessor{
-		PG: pg,
-		MG: mg,
+	reg["import_user_plans"] = &processors.UserPlansProcessor{
+		BaseProcessor: base,
+		UserPlansRepo: database.NewUserPlanRepo(pg),
 	}
-	reg["distribution_debts"] = processors.DistributionDebtsProcessor{
-		PG: pg,
-		MG: mg,
+	reg["distribution_debts"] = &processors.DistributionDebtsProcessor{
+		BaseProcessor: base,
 	}
 
-	reg["update_debts"] = processors.UpdateDebtsProcessor{
-		PG: pg,
-		MG: mg,
+	reg["update_debts"] = &processors.UpdateDebtsProcessor{
+		BaseProcessor: base,
 	}
 
 	reg["import_debtors"] = &processors.DebtorsProcessor{
-		PG: pg,
-		MG: mg,
+		BaseProcessor: base,
 
-		DebtorsRepo:             database.NewDebtorRepo(pg, "debtors"),
-		DebtsRepo:               database.NewDebtsRepo(pg, "debts"),
-		AddressesRepo:           database.NewAddressesRepo(pg, "addresses"),
-		PhonesRepo:              database.NewPhoneRepo(pg, "phones"),
-		ContactPersonPhonesRepo: database.NewContactPersonPhonesRepo(pg, "phones", "contact_persons"),
-		//WorkplacesRepo: database.NewWorkplaceRepo(pg, "workplaces"),
+		DebtorsRepo:             database.NewDebtorRepo(pg),
+		DebtsRepo:               database.NewDebtsRepo(pg),
+		AddressesRepo:           database.NewAddressesRepo(pg),
+		PhonesRepo:              database.NewPhoneRepo(pg),
+		ContactPersonPhonesRepo: database.NewContactPersonPhonesRepo(pg),
 	}
+
 	return reg
 }

@@ -2,48 +2,34 @@ package processors
 
 import (
 	"context"
+	"debtster_import/internal/models"
 	"debtster_import/internal/ports"
-	"errors"
 	"log"
 	"strconv"
 	"strings"
 	"time"
 
-	mg "debtster_import/internal/config/connections/mongo"
-	"debtster_import/internal/config/connections/postgres"
 	"debtster_import/internal/repository/database"
 	importitems "debtster_import/internal/repository/imports"
 
 	"github.com/google/uuid"
 )
 
-// DebtorsProcessor отвечает за импорт должников, долгов, адресов, телефонов и контактов
 type DebtorsProcessor struct {
-	PG *postgres.Postgres
-	MG *mg.Mongo
+	*BaseProcessor
 
 	DebtorsRepo             *database.DebtorRepo
 	DebtsRepo               *database.DebtsRepo
 	AddressesRepo           *database.AddressesRepo
 	PhonesRepo              *database.PhoneRepo
 	ContactPersonPhonesRepo *database.ContactPersonPhonesRepo
-
-	DebtorsTable             string
-	DebtsTable               string
-	AddressesTable           string
-	PhonesTable              string
-	ContactPersonPhonesTable string
-	ContactPersonsTable      string
 }
 
 func (p DebtorsProcessor) Type() string { return "import_debtors" }
 
 func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
-	if p.PG == nil || p.PG.Pool == nil {
-		return errors.New("postgres not available")
-	}
-	if p.MG == nil || p.MG.Database == nil {
-		return errors.New("mongo not available")
+	if err := CheckDeps(p); err != nil {
+		return err
 	}
 
 	log.Printf("[PROC][debtors][START] rows=%d", len(batch))
@@ -65,8 +51,7 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			continue
 		}
 
-		// --- 👤 Debtor ---
-		row := database.DebtorRow{
+		row := models.Debtor{
 			IIN:                         iin,
 			FullName:                    strings.TrimSpace(m["full_name"]),
 			Status:                      strings.TrimSpace(m["status"]),
@@ -80,7 +65,7 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			CreatedAt:                   nowPtr(),
 		}
 
-		debtor, ok, err := p.DebtorsRepo.UpdateOrCreate(ctx, row)
+		debtor, err := p.DebtorsRepo.UpdateOrCreate(ctx, row)
 		if err != nil {
 			failed++
 			log.Printf("[PROC][debtors][ERR] row=%d iin=%s err=%v", i, iin, err)
@@ -88,11 +73,10 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			continue
 		}
 
-		// --- 💰 Debt ---
 		if p.DebtsRepo != nil {
 			debtNumber := strings.TrimSpace(m["debt_number"])
 			if debtNumber != "" {
-				debtRow := database.DebtRow{
+				debtRow := models.Debt{
 					ID:               uuid.NewString(),
 					DebtorID:         &debtor.ID,
 					Number:           debtNumber,
@@ -116,7 +100,6 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			}
 		}
 
-		// --- 🏠 Addresses ---
 		if p.AddressesRepo != nil {
 			addresses := []struct {
 				key    string
@@ -131,14 +114,11 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 				if addr == "" {
 					continue
 				}
-				addrRow := database.AddressRow{
-					DebtorID:    debtor.ID,
-					IIN:         iin,
-					Address:     addr,
-					TypeID:      &a.typeID,
-					SubjectType: "App\\Infrastructure\\Persistence\\Models\\Debtor",
-					CreatedAt:   nowPtr(),
-					UpdatedAt:   nowPtr(),
+				addrRow := models.Address{
+					DebtorID: debtor.ID,
+					IIN:      iin,
+					Address:  addr,
+					TypeID:   &a.typeID,
 				}
 				if err := p.AddressesRepo.SaveAddress(ctx, addrRow); err != nil {
 					log.Printf("[PROC][addresses][ERR] iin=%s type_id=%d: %v", iin, a.typeID, err)
@@ -147,15 +127,14 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			}
 		}
 
-		// --- 📞 Phones ---
 		if p.PhonesRepo != nil {
 			phones := []struct {
 				key    string
 				typeID int
 			}{
-				{"phones", 1},      // основной
-				{"work_phones", 2}, // рабочий
-				{"home_phones", 3}, // домашний
+				{"phones", 1},
+				{"work_phones", 2},
+				{"home_phones", 3},
 			}
 
 			for _, ph := range phones {
@@ -164,13 +143,12 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 					continue
 				}
 
-				phoneRow := database.PhoneRow{
+				phoneRow := models.Phone{
 					SubjectType: "App\\Infrastructure\\Persistence\\Models\\Debtor",
 					SubjectID:   debtor.ID,
 					PhonesRaw:   raw,
 					TypeID:      &ph.typeID,
 					CreatedAt:   nowPtr(),
-					UpdatedAt:   nowPtr(),
 				}
 
 				if err := p.PhonesRepo.SavePhones(ctx, phoneRow); err != nil {
@@ -179,8 +157,6 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 				}
 			}
 		}
-
-		// --- 👥 Contact Person Phones --- (временно отключено)
 
 		if p.ContactPersonPhonesRepo != nil {
 			raw := strings.TrimSpace(m["contact_person_phones"])
@@ -196,11 +172,7 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			}
 		}
 
-		// --- Log import item ---
 		status := "done"
-		if !ok {
-			status = "skipped"
-		}
 		success++
 
 		if _, err := importitems.InsertItem(ctx, p.MG, importitems.Item{

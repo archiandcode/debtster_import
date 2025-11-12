@@ -3,34 +3,22 @@ package database
 import (
 	"context"
 	"debtster_import/internal/config/connections/postgres"
+	"debtster_import/internal/models"
 	"regexp"
 	"strings"
-	"time"
 )
 
 type PhoneRepo struct {
-	pg    *postgres.Postgres
-	table string
+	pg *postgres.Postgres
 }
 
-func NewPhoneRepo(pg *postgres.Postgres, table string) *PhoneRepo {
+func NewPhoneRepo(pg *postgres.Postgres) *PhoneRepo {
 	return &PhoneRepo{
-		pg:    pg,
-		table: table,
+		pg: pg,
 	}
 }
 
-type PhoneRow struct {
-	ID          string
-	SubjectType string
-	SubjectID   string
-	PhonesRaw   string
-	TypeID      *int
-	CreatedAt   *time.Time
-	UpdatedAt   *time.Time
-}
-
-func (r *PhoneRepo) SavePhones(ctx context.Context, row PhoneRow) error {
+func (r *PhoneRepo) SavePhones(ctx context.Context, row models.Phone) error {
 	row.PhonesRaw = strings.TrimSpace(row.PhonesRaw)
 	row.SubjectType = strings.TrimSpace(row.SubjectType)
 
@@ -47,11 +35,12 @@ func (r *PhoneRepo) SavePhones(ctx context.Context, row PhoneRow) error {
 			continue
 		}
 
+		table := "phones"
 		query := `
-			INSERT INTO ` + r.table + ` (
-				id, subject_type, subject_id, phone, type_id, created_at, updated_at
+			INSERT INTO ` + table + ` (
+				id, subject_type, subject_id, phone, type_id, created_at,
 			) VALUES (
-				gen_random_uuid(), $1, $2, $3, $4,  NOW(), NOW()
+				gen_random_uuid(), $1, $2, $3, $4,  NOW(),
 			)
 		`
 

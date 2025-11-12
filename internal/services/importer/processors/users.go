@@ -2,14 +2,11 @@ package processors
 
 import (
 	"context"
-	"errors"
 	"log"
 	"regexp"
 	"strings"
 	"time"
 
-	mg "debtster_import/internal/config/connections/mongo"
-	"debtster_import/internal/config/connections/postgres"
 	"debtster_import/internal/ports"
 	importitems "debtster_import/internal/repository/imports"
 
@@ -19,8 +16,7 @@ import (
 )
 
 type UsersProcessor struct {
-	PG *postgres.Postgres
-	MG *mg.Mongo
+	*BaseProcessor
 
 	UsersTable string
 }
@@ -28,11 +24,8 @@ type UsersProcessor struct {
 func (p UsersProcessor) Type() string { return "import_users" }
 
 func (p UsersProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
-	if p.PG == nil || p.PG.Pool == nil {
-		return errors.New("postgres not available")
-	}
-	if p.MG == nil || p.MG.Database == nil {
-		return errors.New("mongo not available")
+	if err := CheckDeps(p); err != nil {
+		return err
 	}
 
 	var importRecordID string
@@ -42,7 +35,7 @@ func (p UsersProcessor) ProcessBatch(ctx context.Context, batch []map[string]str
 		}
 	}
 
-	usersTable := firstNonEmpty(p.UsersTable, "users")
+	usersTable := "users"
 	log.Printf("[PROC][users][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
 	type row struct {

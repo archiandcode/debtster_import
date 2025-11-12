@@ -6,8 +6,9 @@ import (
 	"io"
 	"log"
 
-	"github.com/minio/minio-go/v7"
 	"debtster_import/internal/ports"
+
+	"github.com/minio/minio-go/v7"
 )
 
 type S3Client interface {

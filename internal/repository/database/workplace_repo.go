@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"debtster_import/internal/models"
 	"time"
 
 	"debtster_import/internal/config/connections/postgres"
@@ -21,17 +22,7 @@ func NewWorkplaceRepo(db *postgres.Postgres, table string) *WorkplaceRepo {
 	}
 }
 
-type WorkplaceRow struct {
-	ID       string
-	Name     string
-	Position string
-	UIN      string
-	Address  string
-	Phone    string
-	DebtorID string
-}
-
-func (r *WorkplaceRepo) Insert(ctx context.Context, rows []WorkplaceRow) error {
+func (r *WorkplaceRepo) Insert(ctx context.Context, rows []models.WorkPlace) error {
 	if len(rows) == 0 {
 		return nil
 	}

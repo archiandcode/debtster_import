@@ -2,13 +2,10 @@ package processors
 
 import (
 	"context"
-	"errors"
 	"log"
 	"strings"
 	"time"
 
-	mg "debtster_import/internal/config/connections/mongo"
-	"debtster_import/internal/config/connections/postgres"
 	"debtster_import/internal/ports"
 	importitems "debtster_import/internal/repository/imports"
 
@@ -17,26 +14,17 @@ import (
 )
 
 type ActionsProcessor struct {
-	PG *postgres.Postgres
-	MG *mg.Mongo
-
-	ActionsTable      string
-	DebtsTable        string
-	UsersTable        string
-	DebtStatusesTable string
+	*BaseProcessor
 }
 
 func (p ActionsProcessor) Type() string { return "import_actions" }
 
-func (p ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
+func (p *ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
 	log.Printf("[PROC][actions][CHECK] Mongo client: %v, db: %v",
 		p.MG != nil && p.MG.Client != nil, p.MG != nil && p.MG.Database != nil)
 
-	if p.PG == nil || p.PG.Pool == nil {
-		return errors.New("postgres not available")
-	}
-	if p.MG == nil || p.MG.Database == nil {
-		return errors.New("mongo not available")
+	if err := CheckDeps(p); err != nil {
+		return err
 	}
 
 	var importRecordID string
@@ -46,10 +34,10 @@ func (p ActionsProcessor) ProcessBatch(ctx context.Context, batch []map[string]s
 		}
 	}
 
-	actionsTable := firstNonEmpty(p.ActionsTable, "actions")
-	debtsTable := firstNonEmpty(p.DebtsTable, "debts")
-	usersTable := firstNonEmpty(p.UsersTable, "users")
-	statusTable := firstNonEmpty(p.DebtStatusesTable, "debt_statuses")
+	actionsTable := "actions"
+	debtsTable := "debts"
+	usersTable := "users"
+	statusTable := "debt_statuses"
 
 	log.Printf("[PROC][actions][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 

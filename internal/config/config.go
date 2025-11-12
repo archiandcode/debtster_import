@@ -2,13 +2,13 @@ package config
 
 import (
 	"context"
+	"debtster_import/internal/config/connections/mongo"
+	"debtster_import/internal/config/connections/postgres"
+	"debtster_import/internal/config/connections/s3"
 	"errors"
 	"fmt"
 	"log"
 	"os"
-	"debtster_import/internal/config/connections/mongo"
-	"debtster_import/internal/config/connections/postgres"
-	"debtster_import/internal/config/connections/s3"
 
 	"github.com/joho/godotenv"
 )

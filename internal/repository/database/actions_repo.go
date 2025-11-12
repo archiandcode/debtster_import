@@ -3,34 +3,22 @@ package database
 import (
 	"context"
 	"debtster_import/internal/config/connections/postgres"
-	"time"
+	"debtster_import/internal/models"
 
 	"github.com/jackc/pgx/v5"
 )
 
 type ActionRepo struct {
-	pg    *postgres.Postgres
-	table string
+	pg *postgres.Postgres
 }
 
-func NewActionRepo(pg *postgres.Postgres, table string) *ActionRepo {
+func NewActionRepo(pg *postgres.Postgres) *ActionRepo {
 	return &ActionRepo{
-		pg:    pg,
-		table: table,
+		pg: pg,
 	}
 }
 
-type ActionRow struct {
-	ID           string
-	DebtID       *string
-	UserID       *string
-	DebtStatusID *int64
-	Type         *string
-	Comment      *string
-	CreatedAt    *time.Time
-}
-
-func (r *ActionRepo) SaveActions(ctx context.Context, rows []ActionRow) error {
+func (r *ActionRepo) SaveActions(ctx context.Context, rows []models.Action) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -42,8 +30,9 @@ func (r *ActionRepo) SaveActions(ctx context.Context, rows []ActionRow) error {
 			continue
 		}
 
+		table := "actions"
 		batch.Queue(`
-			INSERT INTO `+r.table+` (
+			INSERT INTO `+table+` (
 				id, debt_id, user_id, debt_status_id, type, comment, created_at
 			) VALUES (
 				$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5, $6, $7

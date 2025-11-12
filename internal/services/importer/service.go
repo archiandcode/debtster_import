@@ -266,8 +266,6 @@ func (s *Service) streamXLSXFirstSheet(ctx context.Context, r io.Reader, proc po
 	return total, nil
 }
 
-// ---------- helpers ----------
-
 func toMap(header []string, row []string) map[string]string {
 	m := make(map[string]string, len(header))
 	for i, key := range header {

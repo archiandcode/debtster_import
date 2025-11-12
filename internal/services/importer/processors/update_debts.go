@@ -2,14 +2,11 @@ package processors
 
 import (
 	"context"
-	"errors"
 	"log"
 	"strconv"
 	"strings"
 	"time"
 
-	mg "debtster_import/internal/config/connections/mongo"
-	"debtster_import/internal/config/connections/postgres"
 	"debtster_import/internal/ports"
 	importitems "debtster_import/internal/repository/imports"
 
@@ -17,20 +14,14 @@ import (
 )
 
 type UpdateDebtsProcessor struct {
-	PG *postgres.Postgres
-	MG *mg.Mongo
-
-	DebtsTable string
+	*BaseProcessor
 }
 
 func (p UpdateDebtsProcessor) Type() string { return "update_debts" }
 
 func (p UpdateDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
-	if p.PG == nil || p.PG.Pool == nil {
-		return errors.New("postgres not available")
-	}
-	if p.MG == nil || p.MG.Database == nil {
-		return errors.New("mongo not available")
+	if err := CheckDeps(p); err != nil {
+		return err
 	}
 
 	var importRecordID string
@@ -40,7 +31,7 @@ func (p UpdateDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 		}
 	}
 
-	debtsTable := firstNonEmpty(p.DebtsTable, "debts")
+	debtsTable := "debts"
 	log.Printf("[PROC][update_debts][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
 	updated := 0
@@ -100,7 +91,6 @@ func (p UpdateDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 			continue
 		}
 
-		// --- Финальный SQL ---
 		query := `UPDATE ` + debtsTable + ` SET ` + strings.Join(setParts, ", ") +
 			`, updated_at=$` + strconv.Itoa(argIdx) +
 			` WHERE number=$` + strconv.Itoa(argIdx+1)
@@ -114,7 +104,6 @@ func (p UpdateDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 		}
 
 		if ct.RowsAffected() == 0 {
-			// Не найден договор — логируем как ошибку
 			logMongoFail(ctx, p.MG, importRecordID, debtsTable, "", m, "debt not found: "+debtNumber)
 			log.Printf("[PROC][update_debts][MISS] row=%d debt_number=%s not found", i, debtNumber)
 			continue

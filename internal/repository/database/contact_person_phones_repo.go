@@ -8,16 +8,12 @@ import (
 )
 
 type ContactPersonPhonesRepo struct {
-	pg            *postgres.Postgres
-	phonesTable   string
-	contactsTable string
+	pg *postgres.Postgres
 }
 
-func NewContactPersonPhonesRepo(pg *postgres.Postgres, phonesTable, contactsTable string) *ContactPersonPhonesRepo {
+func NewContactPersonPhonesRepo(pg *postgres.Postgres) *ContactPersonPhonesRepo {
 	return &ContactPersonPhonesRepo{
-		pg:            pg,
-		phonesTable:   phonesTable,
-		contactsTable: contactsTable,
+		pg: pg,
 	}
 }
 
@@ -82,15 +78,16 @@ func (r *ContactPersonPhonesRepo) SaveContactPersonPhones(ctx context.Context, r
 
 func (r *ContactPersonPhonesRepo) upsertContactPerson(ctx context.Context, debtorID, fullName string, typeID int) (string, error) {
 	var id string
+	contactsTable := "contact_persons"
 
 	err := r.pg.Pool.QueryRow(ctx, `
-		SELECT id FROM `+r.contactsTable+`
+		SELECT id FROM `+contactsTable+`
 		WHERE debtor_id = $1 AND full_name = $2
 	`, debtorID, fullName).Scan(&id)
 
 	if err == nil {
 		_, err = r.pg.Pool.Exec(ctx, `
-			UPDATE `+r.contactsTable+`
+			UPDATE `+contactsTable+`
 			SET type_id = $1, updated_at = NOW()
 			WHERE id = $2
 		`, typeID, id)
@@ -98,7 +95,7 @@ func (r *ContactPersonPhonesRepo) upsertContactPerson(ctx context.Context, debto
 	}
 
 	err = r.pg.Pool.QueryRow(ctx, `
-		INSERT INTO `+r.contactsTable+` (id, debtor_id, full_name, type_id, created_at, updated_at)
+		INSERT INTO `+contactsTable+` (id, debtor_id, full_name, type_id, created_at, updated_at)
 		VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
 		RETURNING id
 	`, debtorID, fullName, typeID).Scan(&id)
@@ -107,10 +104,11 @@ func (r *ContactPersonPhonesRepo) upsertContactPerson(ctx context.Context, debto
 }
 
 func (r *ContactPersonPhonesRepo) insertPhone(ctx context.Context, subjectType, subjectID, phone string, typeID int) error {
+	phonesTable := "phones"
 	query := fmt.Sprintf(`
 		INSERT INTO %s (id, subject_type, subject_id, phone, type_id, created_at, updated_at)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), NOW())
-	`, r.phonesTable)
+	`, phonesTable)
 
 	_, err := r.pg.Pool.Exec(ctx, query, subjectType, subjectID, phone, typeID)
 	return err

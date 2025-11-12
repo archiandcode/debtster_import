@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	mg "debtster_import/internal/config/connections/mongo"
-	"debtster_import/internal/config/connections/postgres"
 	"debtster_import/internal/ports"
 	importitems "debtster_import/internal/repository/imports"
 
@@ -24,27 +22,16 @@ const (
 )
 
 type DistributionDebtsProcessor struct {
-	PG *postgres.Postgres
-	MG *mg.Mongo
-
-	DebtsTable    string
-	UsersTable    string
-	TeamsTable    string
-	RoleUserTable string
-
-	AppTeamName string
+	*BaseProcessor
 
 	SystemTeamID int64
 }
 
 func (p DistributionDebtsProcessor) Type() string { return "distribution_debts" }
 
-func (p DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
-	if p.PG == nil || p.PG.Pool == nil {
-		return errors.New("postgres not available")
-	}
-	if p.MG == nil || p.MG.Database == nil {
-		return errors.New("mongo not available")
+func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
+	if err := CheckDeps(p); err != nil {
+		return err
 	}
 
 	var importRecordID string
@@ -54,26 +41,11 @@ func (p DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []ma
 		}
 	}
 
-	debtsTable := p.DebtsTable
-	if strings.TrimSpace(debtsTable) == "" {
-		debtsTable = "debts"
-	}
-	usersTable := p.UsersTable
-	if strings.TrimSpace(usersTable) == "" {
-		usersTable = "users"
-	}
-	teamsTable := p.TeamsTable
-	if strings.TrimSpace(teamsTable) == "" {
-		teamsTable = "teams"
-	}
-	roleUserTable := p.RoleUserTable
-	if strings.TrimSpace(roleUserTable) == "" {
-		roleUserTable = "role_user"
-	}
-	appTeamName := p.AppTeamName
-	if strings.TrimSpace(appTeamName) == "" {
-		appTeamName = defaultAppTeam
-	}
+	debtsTable := "debts"
+	usersTable := "users"
+	teamsTable := "teams"
+	roleUserTable := "role_user"
+	appTeamName := defaultAppTeam
 
 	log.Printf("[PROC][redistribute][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 

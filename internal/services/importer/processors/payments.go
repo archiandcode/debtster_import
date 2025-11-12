@@ -2,39 +2,36 @@ package processors
 
 import (
 	"context"
-	"errors"
 	"log"
 	"strings"
 	"time"
 
-	mg "debtster_import/internal/config/connections/mongo"
-	"debtster_import/internal/config/connections/postgres"
+	"debtster_import/internal/models"
 	"debtster_import/internal/ports"
+	"debtster_import/internal/repository/database"
 	importitems "debtster_import/internal/repository/imports"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 type PaymentsProcessor struct {
-	PG *postgres.Postgres
-	MG *mg.Mongo
-
-	PaymentsTable string
-	DebtsTable    string
-	UsersTable    string
+	*BaseProcessor
+	PayRepo *database.PaymentRepo
 }
 
 func (p PaymentsProcessor) Type() string { return "add_payments" }
 
-func (p PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
-	if p.PG == nil || p.PG.Pool == nil {
-		return errors.New("postgres not available")
-	}
-	if p.MG == nil || p.MG.Database == nil {
-		return errors.New("mongo not available")
+func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string]string) error {
+	if err := CheckDeps(p); err != nil {
+		return err
 	}
 
+	// Ленивая инициализация репозитория
+	if p.PayRepo == nil {
+		p.PayRepo = database.NewPaymentRepo(p.PG)
+	}
+
+	// import_record_id из контекста
 	var importRecordID string
 	if v := ctx.Value(ports.CtxImportRecordID); v != nil {
 		if s, ok := v.(string); ok {
@@ -42,42 +39,27 @@ func (p PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 		}
 	}
 
-	paymentsTable := firstNonEmpty(p.PaymentsTable, "payments")
-	debtsTable := firstNonEmpty(p.DebtsTable, "debts")
-	usersTable := firstNonEmpty(p.UsersTable, "users")
+	debtsTable := "debts"
+	usersTable := "users"
 
 	log.Printf("[PROC][payments][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
+	// Кэши для ускорения поиска
 	debtIDCache := make(map[string]*string)
 	userIDCache := make(map[string]*int64)
 
-	type row struct {
-		id      string
-		debtID  *string
-		userID  *int64
-		payload map[string]string
-
-		amount                       string
-		amountAfterSubtraction       string
-		amountGovernmentDuty         string
-		amountRepresentationExpenses string
-		amountNotaryFees             string
-		amountPostage                string
-		amountAccountsReceivable     string
-		amountMainDebt               string
-		amountAccrual                string
-		amountFine                   string
-		paymentDate                  *time.Time
-		createdAt                    *time.Time
-		confirmed                    bool
-	}
-
-	rows := make([]row, 0, len(batch))
+	inserted := 0
 
 	for _, m := range batch {
-		debtNumber := strings.TrimSpace(m["debt_number"])
+		id := uuid.NewString()
+
+		// Хелпер для тримминга значений
+		v := func(key string) string { return strings.TrimSpace(m[key]) }
+
+		// debt_number -> debt_id
+		debtNumber := v("debt_number")
 		if debtNumber == "" {
-			logMongoFail(ctx, p.MG, importRecordID, "payments", uuid.NewString(), m, "missing debt_number")
+			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing debt_number")
 			continue
 		}
 		debtUUID, err := getDebtUUID(ctx, p.PG, debtsTable, debtNumber, debtIDCache)
@@ -86,13 +68,14 @@ func (p PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			if err != nil {
 				msg += " (" + err.Error() + ")"
 			}
-			logMongoFail(ctx, p.MG, importRecordID, "payments", uuid.NewString(), m, msg)
+			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, msg)
 			continue
 		}
 
-		username := strings.TrimSpace(m["username"])
+		// username -> user_id
+		username := v("username")
 		if username == "" {
-			logMongoFail(ctx, p.MG, importRecordID, "payments", uuid.NewString(), m, "missing username")
+			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing username")
 			continue
 		}
 		userID, err := getUserBigint(ctx, p.PG, usersTable, username, userIDCache)
@@ -101,88 +84,75 @@ func (p PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 			if err != nil {
 				msg += " (" + err.Error() + ")"
 			}
-			logMongoFail(ctx, p.MG, importRecordID, "payments", uuid.NewString(), m, msg)
+			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, msg)
 			continue
 		}
 
-		paymentDate := parseDateStrict(m["payment_date"])
+		// Дата платежа
+		paymentDate := parseDateStrict(v("payment_date"))
 		if paymentDate == nil {
-			logMongoFail(ctx, p.MG, importRecordID, "payments", uuid.NewString(), m, "bad payment_date")
+			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "bad payment_date")
 			continue
 		}
 
-		amount := normalizeAmount(m["amount"])
+		// Сумма (обязательная и не нулевая)
+		amount := normalizeAmount(v("amount"))
 		if amount == "" || amount == "0" {
-			logMongoFail(ctx, p.MG, importRecordID, "payments", uuid.NewString(), m, "missing/zero amount")
+			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing/zero amount")
 			continue
 		}
 
-		rows = append(rows, row{
-			id:      uuid.NewString(),
-			debtID:  debtUUID,
-			userID:  userID,
-			payload: m,
+		// Собираем модель для репозитория
+		pay := models.Payment{
+			ID:     id,
+			DebtID: *debtUUID,
+			UserID: *userID,
 
-			amount:                       amount,
-			amountAfterSubtraction:       normalizeAmount(m["amount_after_subtraction"]),
-			amountGovernmentDuty:         normalizeAmount(m["amount_government_duty"]),
-			amountRepresentationExpenses: normalizeAmount(m["amount_representation_expenses"]),
-			amountNotaryFees:             normalizeAmount(m["amount_notary_fees"]),
-			amountPostage:                normalizeAmount(m["amount_postage"]),
-			amountAccountsReceivable:     normalizeAmount(m["amount_accounts_receivable"]),
-			amountMainDebt:               normalizeAmount(m["amount_main_debt"]),
-			amountAccrual:                normalizeAmount(m["amount_accrual"]),
-			amountFine:                   normalizeAmount(m["amount_fine"]),
-			paymentDate:                  paymentDate,
-			createdAt:                    nowPtr(),
-			confirmed:                    false,
-		})
-	}
+			Amount:                       amount,
+			AmountAfterSubtraction:       numPtr(normalizeAmount(v("amount_after_subtraction"))),
+			AmountGovernmentDuty:         numPtr(normalizeAmount(v("amount_government_duty"))),
+			AmountRepresentationExpenses: numPtr(normalizeAmount(v("amount_representation_expenses"))),
+			AmountNotaryFees:             numPtr(normalizeAmount(v("amount_notary_fees"))),
+			AmountPostage:                numPtr(normalizeAmount(v("amount_postage"))),
+			AmountAccountsReceivable:     numPtr(normalizeAmount(v("amount_accounts_receivable"))),
+			AmountMainDebt:               numPtr(normalizeAmount(v("amount_main_debt"))),
+			AmountAccrual:                numPtr(normalizeAmount(v("amount_accrual"))),
+			AmountFine:                   numPtr(normalizeAmount(v("amount_fine"))),
 
-	if len(rows) == 0 {
-		log.Printf("[PROC][payments][DONE] no valid rows")
-		return nil
-	}
+			PaymentDate: paymentDate, // created_at ставится в SQL (NOW())
+			Confirmed:   false,
+		}
 
-	batchReq := &pgx.Batch{}
-	for _, r := range rows {
-		batchReq.Queue(
-			`INSERT INTO `+paymentsTable+` (
-				id, debt_id, user_id, amount, amount_after_subtraction, amount_government_duty,
-				amount_representation_expenses, amount_notary_fees, amount_postage, confirmed,
-				payment_date, created_at, amount_accounts_receivable, amount_main_debt,
-				amount_accrual, amount_fine
-			) VALUES (
-				$1::uuid, $2::uuid, $3::bigint, $4::numeric, $5::numeric, $6::numeric,
-				$7::numeric, $8::numeric, $9::numeric, $10::bool,
-				$11::date, $12::timestamp, $13::numeric, $14::numeric,
-				$15::numeric, $16::numeric
-			)`,
-			r.id, r.debtID, r.userID,
-			r.amount, r.amountAfterSubtraction, r.amountGovernmentDuty,
-			r.amountRepresentationExpenses, r.amountNotaryFees, r.amountPostage, r.confirmed,
-			r.paymentDate, r.createdAt, r.amountAccountsReceivable, r.amountMainDebt,
-			r.amountAccrual, r.amountFine,
-		)
-	}
-
-	br := p.PG.Pool.SendBatch(ctx, batchReq)
-	defer br.Close()
-
-	inserted := 0
-	for _, r := range rows {
-		if _, err := br.Exec(); err != nil {
-			logMongo(ctx, p.MG, importRecordID, "payments", r.id, r.payload, "failed", err.Error())
+		// Вставка через репозиторий (ON CONFLICT DO NOTHING — внутри SQL)
+		if err := p.PayRepo.Create(ctx, pay); err != nil {
+			logMongo(ctx, p.MG, importRecordID, "payments", id, m, "failed", err.Error())
 			continue
 		}
+
 		inserted++
-		logMongo(ctx, p.MG, importRecordID, "payments", r.id, r.payload, "done", "")
+		logMongo(ctx, p.MG, importRecordID, "payments", id, m, "done", "")
 	}
 
-	log.Printf("[PROC][payments][DONE] total=%d inserted=%d", len(rows), inserted)
+	log.Printf("[PROC][payments][DONE] total=%d inserted=%d", len(batch), inserted)
 
+	// Завершаем импорт
 	if err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID); err != nil {
 		log.Printf("[PROC][payments][ERR] error change status: %v", err)
 	}
 	return nil
+}
+
+// numPtr: пустую строку превращаем в NULL, чтобы не было ""::numeric.
+func numPtr(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// Заглушка для совместимости, если где-то нужен *time.Time "сейчас".
+func nowPtr() *time.Time {
+	t := time.Now()
+	return &t
 }

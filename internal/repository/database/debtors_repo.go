@@ -3,43 +3,23 @@ package database
 import (
 	"context"
 	"debtster_import/internal/config/connections/postgres"
+	"debtster_import/internal/models"
 	"strings"
-	"time"
 )
 
 type DebtorRepo struct {
-	pg    *postgres.Postgres
-	table string
+	pg *postgres.Postgres
 }
 
-func NewDebtorRepo(pg *postgres.Postgres, table string) *DebtorRepo {
+func NewDebtorRepo(pg *postgres.Postgres) *DebtorRepo {
 	return &DebtorRepo{
-		pg:    pg,
-		table: table,
+		pg: pg,
 	}
 }
 
-type DebtorRow struct {
-	ID                          string
-	IIN                         string
-	LastName                    string
-	FirstName                   string
-	MiddleName                  string
-	FullName                    string
-	Status                      string
-	IDCardNumber                string
-	IDCardAuthoritiesInGranting string
-	IDCardStartDate             *time.Time
-	IDCardEndDate               *time.Time
-	BirthDay                    *time.Time
-	Birthplace                  string
-	Nationality                 string
-	CreatedAt                   *time.Time
-}
-
-func (r *DebtorRepo) UpdateOrCreate(ctx context.Context, d DebtorRow) (*DebtorRow, bool, error) {
+func (r *DebtorRepo) UpdateOrCreate(ctx context.Context, d models.Debtor) (*models.Debtor, error) {
 	if strings.TrimSpace(d.IIN) == "" {
-		return nil, false, nil
+		return nil, nil
 	}
 
 	if strings.TrimSpace(d.FullName) != "" &&
@@ -49,8 +29,9 @@ func (r *DebtorRepo) UpdateOrCreate(ctx context.Context, d DebtorRow) (*DebtorRo
 		d.LastName, d.FirstName, d.MiddleName = parseFullName(d.FullName)
 	}
 
+	table := "debtors"
 	query := `
-		INSERT INTO ` + r.table + ` (
+		INSERT INTO ` + table + ` (
 			iin, last_name, first_name, middle_name, status,
 			id_card_number, id_card_authorities_in_granting,
 			id_card_start_date, id_card_end_date, birth_day,
@@ -61,17 +42,17 @@ func (r *DebtorRepo) UpdateOrCreate(ctx context.Context, d DebtorRow) (*DebtorRo
 			$11, $12, NOW(), NOW(), gen_random_uuid()
 		)
 		ON CONFLICT (iin) DO UPDATE SET
-			last_name = COALESCE(NULLIF(EXCLUDED.last_name, ''), ` + r.table + `.last_name),
-			first_name = COALESCE(NULLIF(EXCLUDED.first_name, ''), ` + r.table + `.first_name),
-			middle_name = COALESCE(NULLIF(EXCLUDED.middle_name, ''), ` + r.table + `.middle_name),
-			status = COALESCE(NULLIF(EXCLUDED.status, ''), ` + r.table + `.status),
-			id_card_number = COALESCE(NULLIF(EXCLUDED.id_card_number, ''), ` + r.table + `.id_card_number),
-			id_card_authorities_in_granting = COALESCE(NULLIF(EXCLUDED.id_card_authorities_in_granting, ''), ` + r.table + `.id_card_authorities_in_granting),
-			id_card_start_date = COALESCE(EXCLUDED.id_card_start_date, ` + r.table + `.id_card_start_date),
-			id_card_end_date = COALESCE(EXCLUDED.id_card_end_date, ` + r.table + `.id_card_end_date),
-			birth_day = COALESCE(EXCLUDED.birth_day, ` + r.table + `.birth_day),
-			birthplace = COALESCE(NULLIF(EXCLUDED.birthplace, ''), ` + r.table + `.birthplace),
-			nationality = COALESCE(NULLIF(EXCLUDED.nationality, ''), ` + r.table + `.nationality),
+			last_name = COALESCE(NULLIF(EXCLUDED.last_name, ''), ` + table + `.last_name),
+			first_name = COALESCE(NULLIF(EXCLUDED.first_name, ''), ` + table + `.first_name),
+			middle_name = COALESCE(NULLIF(EXCLUDED.middle_name, ''), ` + table + `.middle_name),
+			status = COALESCE(NULLIF(EXCLUDED.status, ''), ` + table + `.status),
+			id_card_number = COALESCE(NULLIF(EXCLUDED.id_card_number, ''), ` + table + `.id_card_number),
+			id_card_authorities_in_granting = COALESCE(NULLIF(EXCLUDED.id_card_authorities_in_granting, ''), ` + table + `.id_card_authorities_in_granting),
+			id_card_start_date = COALESCE(EXCLUDED.id_card_start_date, ` + table + `.id_card_start_date),
+			id_card_end_date = COALESCE(EXCLUDED.id_card_end_date, ` + table + `.id_card_end_date),
+			birth_day = COALESCE(EXCLUDED.birth_day, ` + table + `.birth_day),
+			birthplace = COALESCE(NULLIF(EXCLUDED.birthplace, ''), ` + table + `.birthplace),
+			nationality = COALESCE(NULLIF(EXCLUDED.nationality, ''), ` + table + `.nationality),
 			updated_at = NOW()
 		RETURNING 
 			id, iin, last_name, first_name, middle_name, status,
@@ -87,7 +68,7 @@ func (r *DebtorRepo) UpdateOrCreate(ctx context.Context, d DebtorRow) (*DebtorRo
 		d.Birthplace, d.Nationality,
 	)
 
-	var debtor DebtorRow
+	var debtor models.Debtor
 	err := row.Scan(
 		&debtor.ID, &debtor.IIN, &debtor.LastName, &debtor.FirstName, &debtor.MiddleName, &debtor.Status,
 		&debtor.IDCardNumber, &debtor.IDCardAuthoritiesInGranting,
@@ -95,10 +76,10 @@ func (r *DebtorRepo) UpdateOrCreate(ctx context.Context, d DebtorRow) (*DebtorRo
 		&debtor.Birthplace, &debtor.Nationality, &debtor.CreatedAt,
 	)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
-	return &debtor, true, nil
+	return &debtor, nil
 }
 
 func parseFullName(fullname string) (last, first, middle string) {

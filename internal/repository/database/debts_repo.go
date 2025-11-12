@@ -2,52 +2,22 @@ package database
 
 import (
 	"context"
-	"strings"
-	"time"
-
 	"debtster_import/internal/config/connections/postgres"
+	"debtster_import/internal/models"
+	"strings"
 )
 
 type DebtsRepo struct {
-	pg    *postgres.Postgres
-	table string
+	pg *postgres.Postgres
 }
 
-func NewDebtsRepo(pg *postgres.Postgres, table string) *DebtsRepo {
+func NewDebtsRepo(pg *postgres.Postgres) *DebtsRepo {
 	return &DebtsRepo{
-		pg:    pg,
-		table: table,
+		pg: pg,
 	}
 }
 
-type DebtRow struct {
-	ID                          string
-	DebtorID                    *string
-	Number                      string
-	StartDate                   *time.Time
-	EndDate                     *time.Time
-	Filial                      string
-	ProductName                 string
-	Currency                    string
-	AmountActualDebt            *float64
-	AmountAccountsReceivable    *float64
-	AmountCredit                *float64
-	AmountMainDebt              *float64
-	AmountFine                  *float64
-	AmountAccrual               *float64
-	AmountGovernmentDuty        *float64
-	AmountRepresentationExpense *float64
-	AmountNotaryFees            *float64
-	AmountPostage               *float64
-	AdditionalData              string
-	UserID                      *int64
-	CounterpartyID              *int64
-	StatusID                    *int64
-	CreatedAt                   *time.Time
-}
-
-// ✅ Полностью исправлено: не затирает старые значения, работает безопасно
-func (r *DebtsRepo) UpdateOrCreate(ctx context.Context, row DebtRow) error {
+func (r *DebtsRepo) UpdateOrCreate(ctx context.Context, row models.Debt) error {
 	row.Filial = strings.TrimSpace(row.Filial)
 	row.ProductName = strings.TrimSpace(row.ProductName)
 	row.Currency = strings.TrimSpace(row.Currency)
@@ -91,8 +61,9 @@ func (r *DebtsRepo) UpdateOrCreate(ctx context.Context, row DebtRow) error {
 		}
 	}
 
+	table := "debts"
 	query := `
-		INSERT INTO ` + r.table + ` (
+		INSERT INTO ` + table + ` (
 			id, debtor_id, number, start_date, end_date, filial, product_name,
 			amount_currency, amount_actual_debt, amount_accounts_receivable,
 			amount_credit, amount_main_debt, amount_fine, amount_accrual,
@@ -108,26 +79,26 @@ func (r *DebtsRepo) UpdateOrCreate(ctx context.Context, row DebtRow) error {
 			$20, $21, $22, NOW()
 		)
 		ON CONFLICT (number) DO UPDATE SET
-			debtor_id = COALESCE(EXCLUDED.debtor_id, ` + r.table + `.debtor_id),
-			start_date = COALESCE(EXCLUDED.start_date, ` + r.table + `.start_date),
-			end_date = COALESCE(EXCLUDED.end_date, ` + r.table + `.end_date),
-			filial = COALESCE(NULLIF(EXCLUDED.filial, ''), ` + r.table + `.filial),
-			product_name = COALESCE(NULLIF(EXCLUDED.product_name, ''), ` + r.table + `.product_name),
-			amount_currency = COALESCE(NULLIF(EXCLUDED.amount_currency, ''), ` + r.table + `.amount_currency),
-			amount_actual_debt = COALESCE(EXCLUDED.amount_actual_debt, ` + r.table + `.amount_actual_debt),
-			amount_accounts_receivable = COALESCE(EXCLUDED.amount_accounts_receivable, ` + r.table + `.amount_accounts_receivable),
-			amount_credit = COALESCE(EXCLUDED.amount_credit, ` + r.table + `.amount_credit),
-			amount_main_debt = COALESCE(EXCLUDED.amount_main_debt, ` + r.table + `.amount_main_debt),
-			amount_fine = COALESCE(EXCLUDED.amount_fine, ` + r.table + `.amount_fine),
-			amount_accrual = COALESCE(EXCLUDED.amount_accrual, ` + r.table + `.amount_accrual),
-			amount_government_duty = COALESCE(EXCLUDED.amount_government_duty, ` + r.table + `.amount_government_duty),
-			amount_representation_expenses = COALESCE(EXCLUDED.amount_representation_expenses, ` + r.table + `.amount_representation_expenses),
-			amount_notary_fees = COALESCE(EXCLUDED.amount_notary_fees, ` + r.table + `.amount_notary_fees),
-			amount_postage = COALESCE(EXCLUDED.amount_postage, ` + r.table + `.amount_postage),
-			additional_data = COALESCE(EXCLUDED.additional_data, ` + r.table + `.additional_data),
-			user_id = COALESCE(EXCLUDED.user_id, ` + r.table + `.user_id),
-			counterparty_id = COALESCE(EXCLUDED.counterparty_id, ` + r.table + `.counterparty_id),
-			status_id = COALESCE(EXCLUDED.status_id, ` + r.table + `.status_id),
+			debtor_id = COALESCE(EXCLUDED.debtor_id, ` + table + `.debtor_id),
+			start_date = COALESCE(EXCLUDED.start_date, ` + table + `.start_date),
+			end_date = COALESCE(EXCLUDED.end_date, ` + table + `.end_date),
+			filial = COALESCE(NULLIF(EXCLUDED.filial, ''), ` + table + `.filial),
+			product_name = COALESCE(NULLIF(EXCLUDED.product_name, ''), ` + table + `.product_name),
+			amount_currency = COALESCE(NULLIF(EXCLUDED.amount_currency, ''), ` + table + `.amount_currency),
+			amount_actual_debt = COALESCE(EXCLUDED.amount_actual_debt, ` + table + `.amount_actual_debt),
+			amount_accounts_receivable = COALESCE(EXCLUDED.amount_accounts_receivable, ` + table + `.amount_accounts_receivable),
+			amount_credit = COALESCE(EXCLUDED.amount_credit, ` + table + `.amount_credit),
+			amount_main_debt = COALESCE(EXCLUDED.amount_main_debt, ` + table + `.amount_main_debt),
+			amount_fine = COALESCE(EXCLUDED.amount_fine, ` + table + `.amount_fine),
+			amount_accrual = COALESCE(EXCLUDED.amount_accrual, ` + table + `.amount_accrual),
+			amount_government_duty = COALESCE(EXCLUDED.amount_government_duty, ` + table + `.amount_government_duty),
+			amount_representation_expenses = COALESCE(EXCLUDED.amount_representation_expenses, ` + table + `.amount_representation_expenses),
+			amount_notary_fees = COALESCE(EXCLUDED.amount_notary_fees, ` + table + `.amount_notary_fees),
+			amount_postage = COALESCE(EXCLUDED.amount_postage, ` + table + `.amount_postage),
+			additional_data = COALESCE(EXCLUDED.additional_data, ` + table + `.additional_data),
+			user_id = COALESCE(EXCLUDED.user_id, ` + table + `.user_id),
+			counterparty_id = COALESCE(EXCLUDED.counterparty_id, ` + table + `.counterparty_id),
+			status_id = COALESCE(EXCLUDED.status_id, ` + table + `.status_id),
 			updated_at = NOW()
 	`
 
@@ -142,4 +113,8 @@ func (r *DebtsRepo) UpdateOrCreate(ctx context.Context, row DebtRow) error {
 	)
 
 	return err
+}
+
+func (r *DebtsRepo) GetByUUID(uuid string) *models.Debt {
+	return nil
 }
