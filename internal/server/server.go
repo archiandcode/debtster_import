@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"debtster_import/internal/handlers"
+	"debtster_import/internal/repository"
+	auth "debtster_import/internal/transport/auth"
 )
 
 type Server struct {
@@ -20,6 +22,9 @@ func NewServer(port string, h *handlers.Handlers) *Server {
 	if h != nil {
 		mux.HandleFunc("/health", h.Health)
 		mux.HandleFunc("/import", h.Import)
+		tokenRepo := repository.NewPersonalAccessTokenRepository(h.Postgres)
+		sanctum := auth.SanctumMiddleware(tokenRepo)
+		mux.Handle("/upload", sanctum(http.HandlerFunc(h.Upload)))
 	}
 
 	return &Server{
