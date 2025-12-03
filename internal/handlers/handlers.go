@@ -46,13 +46,22 @@ func (h *Handlers) JSON(w http.ResponseWriter, code int, v any) {
 }
 
 func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Processor {
-	reg := processors.DefaultRegistry()
+	reg := map[string]ports.Processor{}
 
 	base := processors.NewBaseProcessor(pg, mg)
+	debtsRepo := database.NewDebtsRepo(pg)
+	usersRepo := database.NewUserRepo(pg)
+	debtStatusesRepo := database.NewDebtStatusesRepo(pg)
+	actionRepo := database.NewActionRepo(pg)
 
 	reg["import_actions"] = &processors.ActionsProcessor{
-		BaseProcessor: base,
+		BaseProcessor:    base,
+		DebtsRepo:        debtsRepo,
+		UserRepo:         usersRepo,
+		DebtStatusesRepo: debtStatusesRepo,
+		ActionsRepo:      actionRepo,
 	}
+
 	reg["import_agreements"] = &processors.AgreementsProcessor{
 		BaseProcessor: base,
 	}
@@ -81,7 +90,7 @@ func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Pro
 		BaseProcessor: base,
 
 		DebtorsRepo:             database.NewDebtorRepo(pg),
-		DebtsRepo:               database.NewDebtsRepo(pg),
+		DebtsRepo:               debtsRepo,
 		AddressesRepo:           database.NewAddressesRepo(pg),
 		PhonesRepo:              database.NewPhoneRepo(pg),
 		ContactPersonPhonesRepo: database.NewContactPersonPhonesRepo(pg),

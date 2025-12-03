@@ -15,7 +15,9 @@ import (
 
 type PaymentsProcessor struct {
 	*BaseProcessor
-	PayRepo *database.PaymentRepo
+	PayRepo   *database.PaymentRepo
+	DebtsRepo *database.DebtsRepo
+	UserRepo  *database.UserRepo
 }
 
 func (p PaymentsProcessor) Type() string { return "add_payments" }
@@ -36,13 +38,7 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 		}
 	}
 
-	debtsTable := "debts"
-	usersTable := "users"
-
 	log.Printf("[PROC][payments][START] rows=%d import_record_id=%s", len(batch), importRecordID)
-
-	debtIDCache := make(map[string]*string)
-	userIDCache := make(map[string]*int64)
 
 	inserted := 0
 
@@ -56,7 +52,7 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing debt_number")
 			continue
 		}
-		debtUUID, err := getDebtUUID(ctx, p.PG, debtsTable, debtNumber, debtIDCache)
+		debtUUID, err := p.DebtsRepo.GetIDByNumber(ctx, debtNumber)
 		if err != nil || debtUUID == nil {
 			msg := "debt not found: " + debtNumber
 			if err != nil {
@@ -72,7 +68,7 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing username")
 			continue
 		}
-		userID, err := getUserBigint(ctx, p.PG, usersTable, username, userIDCache)
+		userID, err := p.UserRepo.GetUserBigint(ctx, username)
 		if err != nil || userID == nil {
 			msg := "username not found: " + username
 			if err != nil {

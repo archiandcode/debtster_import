@@ -20,10 +20,6 @@ const (
 	defaultAppTeam = "app"
 )
 
-// defaultUserType is intentionally the fully-qualified PHP model class name
-// used in Laravel's role_user.user_type column (e.g. App\Infrastructure\Persistence\Models\User).
-// Use the canonical mapping from importitems.PHPModelMap so it matches other places where
-// the Go import system maps model types to PHP model strings.
 var defaultUserType = importitems.PHPModelMap[importitems.ModelTypeUsers]
 
 type DistributionDebtsProcessor struct {

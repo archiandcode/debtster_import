@@ -7,16 +7,20 @@ import (
 )
 
 type AgreementRepo struct {
-	pg *postgres.Postgres
+	pg    *postgres.Postgres
+	table string
 }
 
 func NewAgreementRepo(pg *postgres.Postgres) *AgreementRepo {
-	return &AgreementRepo{pg: pg}
+	return &AgreementRepo{
+		pg:    pg,
+		table: "agreements",
+	}
 }
 
 func (r *AgreementRepo) UpdateOrCreate(ctx context.Context, a models.Agreement) (*models.Agreement, error) {
 	query := `
-		INSERT INTO agreements (
+		INSERT INTO ` + r.table + ` (
 			agreement_type_id, debt_id, user_id, amount_debt,
 			monthly_payment_amount, scheduled_payment_day,
 			start_date, end_date, created_at, updated_at
@@ -56,4 +60,8 @@ func (r *AgreementRepo) UpdateOrCreate(ctx context.Context, a models.Agreement) 
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (r *AgreementRepo) GetTableName() string {
+	return r.table
 }

@@ -31,3 +31,12 @@ var PHPModelMap = map[ModelType]string{
 	ModelTypeEnforcements:   "App\\Infrastructure\\Persistence\\Models\\EnforcementProceeding",
 	ModelTypeExecDocs:       "App\\Infrastructure\\Persistence\\Models\\ExecutiveDocument",
 }
+
+func PHPModelByTable(table string) string {
+	mt := ModelType(table)
+	if php, ok := PHPModelMap[mt]; ok {
+		return php
+	}
+
+	return PHPModelMap[ModelTypeDebtors]
+}

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	mg "debtster_import/internal/config/connections/mongo"
-	"debtster_import/internal/config/connections/postgres"
 	importitems "debtster_import/internal/repository/imports"
 )
 
@@ -115,46 +114,4 @@ func logMongo(ctx context.Context, mgc *mg.Mongo, importRecordID, model, id stri
 	}); mErr != nil {
 		log.Printf("[PROC][%s][MONGO][ERR] id=%s status=%s err=%v", model, id, status, mErr)
 	}
-}
-
-func getDebtUUID(ctx context.Context, pg *postgres.Postgres, table, number string, cache map[string]*string) (*string, error) {
-	if v, ok := cache[number]; ok {
-		return v, nil
-	}
-	var id string
-	err := pg.Pool.QueryRow(ctx, `SELECT id::text FROM `+table+` WHERE number = $1 LIMIT 1`, number).Scan(&id)
-	if err != nil {
-		cache[number] = nil
-		return nil, err
-	}
-	cache[number] = &id
-	return &id, nil
-}
-
-func getUserBigint(ctx context.Context, pg *postgres.Postgres, table, username string, cache map[string]*int64) (*int64, error) {
-	if v, ok := cache[username]; ok {
-		return v, nil
-	}
-	var id int64
-	err := pg.Pool.QueryRow(ctx, `SELECT id FROM `+table+` WHERE username = $1 LIMIT 1`, username).Scan(&id)
-	if err != nil {
-		cache[username] = nil
-		return nil, err
-	}
-	cache[username] = &id
-	return &id, nil
-}
-
-func getStatusBigint(ctx context.Context, pg *postgres.Postgres, table, shortname string, cache map[string]*int64) (*int64, error) {
-	if v, ok := cache[shortname]; ok {
-		return v, nil
-	}
-	var id int64
-	err := pg.Pool.QueryRow(ctx, `SELECT id FROM `+table+` WHERE shortname = $1 LIMIT 1`, shortname).Scan(&id)
-	if err != nil {
-		cache[shortname] = nil
-		return nil, err
-	}
-	cache[shortname] = &id
-	return &id, nil
 }

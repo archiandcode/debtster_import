@@ -17,6 +17,8 @@ import (
 type AgreementsProcessor struct {
 	*BaseProcessor
 	AgreementsRepo *database.AgreementRepo
+	DebtsRepo      *database.DebtsRepo
+	UserRepo       *database.UserRepo
 }
 
 func (p AgreementsProcessor) Type() string { return "import_agreements" }
@@ -36,12 +38,9 @@ func (p *AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 	log.Printf("[PROC][agreements][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
 	typesTable := "agreement_types"
-	debtsTable := "debts"
-	usersTable := "users"
-
-	debtIDCache := make(map[string]*string)
-	userIDCache := make(map[string]*int64)
 	typeIDCache := make(map[string]*int64)
+
+	modelType := importitems.PHPModelByTable(p.AgreementsRepo.GetTableName())
 
 	success, failed := 0, 0
 
@@ -53,7 +52,7 @@ func (p *AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 			failed++
 			_, _ = importitems.InsertItem(ctx, p.MG, importitems.Item{
 				ImportRecordID: importRecordID,
-				ModelType:      "agreements",
+				ModelType:      modelType,
 				ModelID:        modelID,
 				Payload:        mustJSON(m),
 				Status:         "failed",
@@ -62,7 +61,7 @@ func (p *AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 			continue
 		}
 
-		debtUUID, err := getDebtUUID(ctx, p.PG, debtsTable, debtNumber, debtIDCache)
+		debtUUID, err := p.DebtsRepo.GetIDByNumber(ctx, debtNumber)
 		if err != nil || debtUUID == nil {
 			failed++
 			msg := "debt not found: " + debtNumber
@@ -71,7 +70,7 @@ func (p *AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 			}
 			_, _ = importitems.InsertItem(ctx, p.MG, importitems.Item{
 				ImportRecordID: importRecordID,
-				ModelType:      "agreements",
+				ModelType:      modelType,
 				ModelID:        modelID,
 				Payload:        mustJSON(m),
 				Status:         "failed",
@@ -81,11 +80,12 @@ func (p *AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 		}
 
 		var warnings []string
+
 		var userID *int64
 		if un := strings.TrimSpace(m["username"]); un == "" {
 			warnings = append(warnings, "missing username -> user_id=NULL")
 		} else {
-			if uid, err := getUserBigint(ctx, p.PG, usersTable, un, userIDCache); err == nil && uid != nil {
+			if uid, err := p.UserRepo.GetUserBigint(ctx, un); err == nil && uid != nil {
 				userID = uid
 			} else {
 				warnings = append(warnings, "username not found: "+un+" -> user_id=NULL")
@@ -96,7 +96,7 @@ func (p *AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 		if tname := strings.TrimSpace(m["agreement_type"]); tname != "" {
 			if tid, err := p.getOrCreateAgreementType(ctx, typesTable, tname, typeIDCache); err == nil && tid != nil {
 				agreementTypeID = tid
-			} else {
+			} else if err != nil {
 				warnings = append(warnings, "agreement_type upsert failed: "+err.Error())
 			}
 		} else {
@@ -125,7 +125,7 @@ func (p *AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 			log.Printf("[PROC][agreements][ERR] row=%d debt=%s err=%v", i, debtNumber, err)
 			_, _ = importitems.InsertItem(ctx, p.MG, importitems.Item{
 				ImportRecordID: importRecordID,
-				ModelType:      "agreements",
+				ModelType:      modelType,
 				ModelID:        modelID,
 				Payload:        mustJSON(m),
 				Status:         "failed",
@@ -137,7 +137,7 @@ func (p *AgreementsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 		success++
 		_, _ = importitems.InsertItem(ctx, p.MG, importitems.Item{
 			ImportRecordID: importRecordID,
-			ModelType:      "agreements",
+			ModelType:      modelType,
 			ModelID:        modelID,
 			Payload:        mustJSON(m),
 			Status:         "done",

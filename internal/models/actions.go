@@ -5,7 +5,7 @@ import "time"
 type Action struct {
 	ID           string
 	DebtID       *string
-	UserID       *string
+	UserID       *int64
 	DebtStatusID *int64
 	Type         *string
 	Comment      *string

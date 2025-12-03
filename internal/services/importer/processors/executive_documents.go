@@ -16,6 +16,7 @@ import (
 type ExecutiveDocumentsProcessor struct {
 	*BaseProcessor
 	ExecDocsRepo *database.ExecutiveDocumentsRepo
+	DebtsRepo    *database.DebtsRepo
 }
 
 func (p ExecutiveDocumentsProcessor) Type() string { return "import_executive_documents" }
@@ -36,10 +37,7 @@ func (p *ExecutiveDocumentsProcessor) ProcessBatch(ctx context.Context, batch []
 		}
 	}
 
-	debtsTable := "debts"
 	log.Printf("[PROC][exec_docs][START] rows=%d import_record_id=%s", len(batch), importRecordID)
-
-	debtIDCache := make(map[string]*string)
 
 	for i, m := range batch {
 		modelID := uuid.NewString()
@@ -49,7 +47,7 @@ func (p *ExecutiveDocumentsProcessor) ProcessBatch(ctx context.Context, batch []
 
 		var debtUUID *string
 		if dn := strings.ReplaceAll(v("debt_number"), " ", ""); dn != "" {
-			if du, err := getDebtUUID(ctx, p.PG, debtsTable, dn, debtIDCache); err == nil {
+			if du, err := p.DebtsRepo.GetIDByNumber(ctx, dn); err == nil {
 				debtUUID = du
 				if du == nil {
 					warnings = append(warnings, "debt not found: "+dn+" -> debt_id=NULL")

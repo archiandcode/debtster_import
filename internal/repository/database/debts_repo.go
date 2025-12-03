@@ -8,12 +8,18 @@ import (
 )
 
 type DebtsRepo struct {
-	pg *postgres.Postgres
+	pg    *postgres.Postgres
+	table string
+
+	cache map[string]*string
 }
 
 func NewDebtsRepo(pg *postgres.Postgres) *DebtsRepo {
 	return &DebtsRepo{
 		pg: pg,
+
+		table: "debts",
+		cache: make(map[string]*string),
 	}
 }
 
@@ -115,6 +121,21 @@ func (r *DebtsRepo) UpdateOrCreate(ctx context.Context, row models.Debt) error {
 	return err
 }
 
-func (r *DebtsRepo) GetByUUID(uuid string) *models.Debt {
-	return nil
+func (r *DebtsRepo) GetIDByNumber(ctx context.Context, number string) (*string, error) {
+	if v, ok := r.cache[number]; ok {
+		return v, nil
+	}
+
+	var id string
+	err := r.pg.Pool.QueryRow(ctx,
+		`SELECT id::text FROM `+r.table+` WHERE number = $1 LIMIT 1`,
+		number,
+	).Scan(&id)
+	if err != nil {
+		r.cache[number] = nil
+		return nil, err
+	}
+
+	r.cache[number] = &id
+	return &id, nil
 }

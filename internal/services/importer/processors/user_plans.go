@@ -18,6 +18,7 @@ import (
 type UserPlansProcessor struct {
 	*BaseProcessor
 	UserPlansRepo *database.UserPlanRepo
+	UserRepo      *database.UserRepo
 }
 
 func (p UserPlansProcessor) Type() string { return "import_user_plans" }
@@ -34,10 +35,8 @@ func (p *UserPlansProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 		}
 	}
 
-	usersTable := "users"
 	log.Printf("[PROC][user_plans][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
-	userIDCache := make(map[string]*int64)
 	success, failed := 0, 0
 
 	for i, m := range batch {
@@ -49,7 +48,7 @@ func (p *UserPlansProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 			logMongoFail(ctx, p.MG, importRecordID, "user_plans", modelID, m, "missing username")
 			continue
 		}
-		uid, err := getUserBigint(ctx, p.PG, usersTable, username, userIDCache)
+		uid, err := p.UserRepo.GetUserBigint(ctx, username)
 		if err != nil || uid == nil {
 			failed++
 			msg := "username not found: " + username

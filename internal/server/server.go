@@ -2,14 +2,14 @@ package server
 
 import (
 	"context"
+	"debtster_import/internal/repository"
+	"debtster_import/internal/transport/auth"
 	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"debtster_import/internal/handlers"
-	"debtster_import/internal/repository"
-	auth "debtster_import/internal/transport/auth"
 )
 
 type Server struct {
