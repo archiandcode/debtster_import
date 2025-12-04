@@ -26,6 +26,9 @@ func (p *EnforcementProceedingsProcessor) ProcessBatch(ctx context.Context, batc
 		return err
 	}
 
+	// ------------------------------------------------------------------
+	// Получаем import_record_id
+	// ------------------------------------------------------------------
 	var importRecordID string
 	if v := ctx.Value(ports.CtxImportRecordID); v != nil {
 		if s, ok := v.(string); ok {
@@ -34,28 +37,51 @@ func (p *EnforcementProceedingsProcessor) ProcessBatch(ctx context.Context, batc
 	}
 
 	modelType := importitems.PHPModelByTable(p.EnfProcRepo.GetTableName())
+
 	log.Printf("[PROC][enf_proc][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
+	// ------------------------------------------------------------------
+	// Начинаем обработку
+	// ------------------------------------------------------------------
 	for _, m := range batch {
 		modelID := uuid.NewString()
-
 		f := func(key string) string { return strings.TrimSpace(m[key]) }
+
 		debtNumber := strings.ReplaceAll(f("debt_number"), " ", "")
 		if debtNumber == "" {
-			logMongoFail(ctx, p.MG, importRecordID, modelType, modelID, m, "missing debt_number")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         "missing debt_number",
+			})
 			continue
 		}
 
+		// ------------------------------------------------------------------
+		// Ищем debt
+		// ------------------------------------------------------------------
 		debtUUID, err := p.DebtsRepo.GetIDByNumber(ctx, debtNumber)
 		if err != nil || debtUUID == nil {
 			msg := "debt not found: " + debtNumber
 			if err != nil {
 				msg += " (" + err.Error() + ")"
 			}
-			logMongoFail(ctx, p.MG, importRecordID, modelType, modelID, m, msg)
+
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         msg,
+			})
 			continue
 		}
 
+		// ------------------------------------------------------------------
+		// Формируем модель
+		// ------------------------------------------------------------------
 		row := models.EnforcementProceeding{
 			SerialNumber:         nullIfEmpty(f("enforcement_proceeding_serial_number")),
 			DebtID:               debtUUID,
@@ -67,18 +93,41 @@ func (p *EnforcementProceedingsProcessor) ProcessBatch(ctx context.Context, batc
 			CreatedAt:            nowPtr(),
 		}
 
+		// ------------------------------------------------------------------
+		// Upsert
+		// ------------------------------------------------------------------
 		if _, err := p.EnfProcRepo.Upsert(ctx, row); err != nil {
-			logMongoFail(ctx, p.MG, importRecordID, modelType, modelID, m, err.Error())
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         err.Error(),
+			})
 			continue
 		}
 
-		logMongo(ctx, p.MG, importRecordID, modelType, modelID, m, "done", "")
+		// ------------------------------------------------------------------
+		// Успешная запись
+		// ------------------------------------------------------------------
+		importitems.LogMongo(ctx, p.MG, importitems.LogParams{
+			ImportRecordID: importRecordID,
+			ModelType:      modelType,
+			ModelID:        modelID,
+			Payload:        m,
+			Status:         "done",
+			Errors:         "",
+		})
 	}
 
 	log.Printf("[PROC][enf_proc][DONE] total=%d", len(batch))
 
+	// ------------------------------------------------------------------
+	// Обновляем статус import_record
+	// ------------------------------------------------------------------
 	if err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID); err != nil {
 		log.Printf("[PROC][enf_proc][ERR] error change status: %v", err)
 	}
+
 	return nil
 }

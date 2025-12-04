@@ -2,7 +2,9 @@ package importitems
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	mg "debtster_import/internal/config/connections/mongo"
@@ -24,6 +26,15 @@ type Item struct {
 	Errors         string    `bson:"errors" json:"errors"`
 	CreatedAt      time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt      time.Time `bson:"updated_at" json:"updated_at"`
+}
+
+type LogParams struct {
+	ImportRecordID string
+	ModelType      string
+	ModelID        string
+	Payload        map[string]string
+	Status         string
+	Errors         string
 }
 
 func InsertItem(ctx context.Context, m *mg.Mongo, item Item) (*mongo.InsertOneResult, error) {
@@ -93,4 +104,29 @@ func UpdateImportRecordStatus(ctx context.Context, m *mg.Mongo, importRecordID, 
 
 func UpdateImportRecordStatusDone(ctx context.Context, m *mg.Mongo, importRecordID string) error {
 	return UpdateImportRecordStatus(ctx, m, importRecordID, "done")
+}
+
+func LogMongoFail(ctx context.Context, mgc *mg.Mongo, p LogParams) {
+	p.Status = "failed"
+	LogMongo(ctx, mgc, p)
+}
+
+func LogMongo(ctx context.Context, mgc *mg.Mongo, p LogParams) {
+	if mgc == nil || mgc.Database == nil {
+		return
+	}
+
+	b, _ := json.Marshal(p.Payload)
+
+	if _, mErr := InsertItem(ctx, mgc, Item{
+		ImportRecordID: p.ImportRecordID,
+		ModelType:      p.ModelType,
+		ModelID:        p.ModelID,
+		Payload:        string(b),
+		Status:         p.Status,
+		Errors:         p.Errors,
+	}); mErr != nil {
+		log.Printf("[PROC][%s][MONGO][ERR] id=%s status=%s err=%v",
+			p.ModelType, p.ModelID, p.Status, mErr)
+	}
 }

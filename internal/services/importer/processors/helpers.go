@@ -1,14 +1,10 @@
 package processors
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"strings"
 	"time"
-
-	mg "debtster_import/internal/config/connections/mongo"
-	importitems "debtster_import/internal/repository/imports"
 )
 
 func firstNonEmpty(s, def string) string {
@@ -93,25 +89,4 @@ func parseDateStrict(s string) *time.Time {
 func nowPtr() *time.Time {
 	t := time.Now()
 	return &t
-}
-
-func logMongoFail(ctx context.Context, mgc *mg.Mongo, importRecordID, model, id string, payload map[string]string, errText string) {
-	logMongo(ctx, mgc, importRecordID, model, id, payload, "failed", errText)
-}
-
-func logMongo(ctx context.Context, mgc *mg.Mongo, importRecordID, model, id string, payload map[string]string, status, errText string) {
-	if mgc == nil || mgc.Database == nil {
-		return
-	}
-	b, _ := json.Marshal(payload)
-	if _, mErr := importitems.InsertItem(ctx, mgc, importitems.Item{
-		ImportRecordID: importRecordID,
-		ModelType:      model,
-		ModelID:        id,
-		Payload:        string(b),
-		Status:         status,
-		Errors:         errText,
-	}); mErr != nil {
-		log.Printf("[PROC][%s][MONGO][ERR] id=%s status=%s err=%v", model, id, status, mErr)
-	}
 }

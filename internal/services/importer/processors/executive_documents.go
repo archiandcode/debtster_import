@@ -30,6 +30,9 @@ func (p *ExecutiveDocumentsProcessor) ProcessBatch(ctx context.Context, batch []
 		p.ExecDocsRepo = database.NewExecutiveDocumentsRepo(p.PG)
 	}
 
+	// -----------------------------
+	// Получаем importRecordID
+	// -----------------------------
 	var importRecordID string
 	if v := ctx.Value(ports.CtxImportRecordID); v != nil {
 		if s, ok := v.(string); ok {
@@ -37,14 +40,22 @@ func (p *ExecutiveDocumentsProcessor) ProcessBatch(ctx context.Context, batch []
 		}
 	}
 
+	modelType := "executive_documents"
+
 	log.Printf("[PROC][exec_docs][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
+	// -----------------------------
+	// Обработка строк
+	// -----------------------------
 	for i, m := range batch {
 		modelID := uuid.NewString()
 		var warnings []string
 
 		v := func(key string) string { return strings.TrimSpace(m[key]) }
 
+		// --------------------------------------------------------
+		// debt_number → debt_id
+		// --------------------------------------------------------
 		var debtUUID *string
 		if dn := strings.ReplaceAll(v("debt_number"), " ", ""); dn != "" {
 			if du, err := p.DebtsRepo.GetIDByNumber(ctx, dn); err == nil {
@@ -59,16 +70,31 @@ func (p *ExecutiveDocumentsProcessor) ProcessBatch(ctx context.Context, batch []
 			warnings = append(warnings, "missing debt_number -> debt_id=NULL")
 		}
 
+		// --------------------------------------------------------
+		// executive_document_type — обязателен
+		// --------------------------------------------------------
 		docType := v("executive_document_type")
 		if docType == "" {
-			logMongoFail(ctx, p.MG, importRecordID, "executive_documents", modelID, m, "missing executive_document_type")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         "missing executive_document_type",
+			})
 			continue
 		}
 
+		// --------------------------------------------------------
+		// Лишнее поле warning
+		// --------------------------------------------------------
 		if v("document_has_estate") != "" {
 			warnings = append(warnings, "document_has_estate provided but column absent -> ignored")
 		}
 
+		// --------------------------------------------------------
+		// Формируем модель
+		// --------------------------------------------------------
 		doc := models.ExecutiveDocument{
 			ID:                      modelID,
 			DocType:                 docType,
@@ -89,23 +115,50 @@ func (p *ExecutiveDocumentsProcessor) ProcessBatch(ctx context.Context, batch []
 			DVPTransferredAt:        parseDateStrict(v("executive_document_dvp_transferred_at")),
 		}
 
+		// --------------------------------------------------------
+		// Создание записи
+		// --------------------------------------------------------
 		if err := p.ExecDocsRepo.Create(ctx, doc); err != nil {
 			log.Printf("[PROC][exec_docs][WARN] row=%d insert failed: %v", i, err)
-			logMongoFail(ctx, p.MG, importRecordID, "executive_documents", modelID, m, err.Error())
+
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         err.Error(),
+			})
 			continue
 		}
 
-		logMongo(ctx, p.MG, importRecordID, "executive_documents", modelID, m, "done", strings.Join(warnings, "; "))
+		// --------------------------------------------------------
+		// Успешный лог
+		// --------------------------------------------------------
+		importitems.LogMongo(ctx, p.MG, importitems.LogParams{
+			ImportRecordID: importRecordID,
+			ModelType:      modelType,
+			ModelID:        modelID,
+			Payload:        m,
+			Status:         "done",
+			Errors:         strings.Join(warnings, "; "),
+		})
 	}
 
 	log.Printf("[PROC][exec_docs][DONE] total=%d", len(batch))
 
+	// -----------------------------
+	// Обновление статуса import_record
+	// -----------------------------
 	if err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID); err != nil {
 		log.Printf("[PROC][exec_docs][ERR] error change status: %v", err)
 	}
+
 	return nil
 }
 
+// -----------------------------
+// boolLoose — как есть
+// -----------------------------
 func boolLoose(s string) bool {
 	v := strings.TrimSpace(strings.ToLower(s))
 	if v == "" {

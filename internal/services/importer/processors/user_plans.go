@@ -38,16 +38,28 @@ func (p *UserPlansProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 	log.Printf("[PROC][user_plans][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
 	success, failed := 0, 0
+	modelType := "user_plans" // можно заменить на importitems.PHPModelByTable при необходимости
 
 	for i, m := range batch {
+
 		modelID := uuid.NewString()
 
+		// --------------------------------
+		// 1. username
+		// --------------------------------
 		username := strings.TrimSpace(m["username"])
 		if username == "" {
 			failed++
-			logMongoFail(ctx, p.MG, importRecordID, "user_plans", modelID, m, "missing username")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         "missing username",
+			})
 			continue
 		}
+
 		uid, err := p.UserRepo.GetUserBigint(ctx, username)
 		if err != nil || uid == nil {
 			failed++
@@ -55,12 +67,24 @@ func (p *UserPlansProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 			if err != nil {
 				msg += " (" + err.Error() + ")"
 			}
-			logMongoFail(ctx, p.MG, importRecordID, "user_plans", modelID, m, msg)
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         msg,
+			})
 			continue
 		}
 
+		// --------------------------------
+		// 2. amount
+		// --------------------------------
 		amount := normalizeAmount(m["user_plan_amount"])
 
+		// --------------------------------
+		// 3. quantity
+		// --------------------------------
 		qty := strings.TrimSpace(m["user_plan_quantity"])
 		if qty == "" {
 			qty = "0"
@@ -68,24 +92,41 @@ func (p *UserPlansProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 			qty = strings.NewReplacer(" ", "", ",", "", ".", "").Replace(qty)
 			if _, err := strconv.ParseInt(qty, 10, 64); err != nil {
 				failed++
-				logMongoFail(ctx, p.MG, importRecordID, "user_plans", modelID, m, "bad user_plan_quantity")
+				importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+					ImportRecordID: importRecordID,
+					ModelType:      modelType,
+					ModelID:        modelID,
+					Payload:        m,
+					Errors:         "bad user_plan_quantity",
+				})
 				continue
 			}
 		}
 
+		// --------------------------------
+		// 4. end_date
+		// --------------------------------
 		var endDate *time.Time
+
 		if d := strings.TrimSpace(m["end_date"]); d != "" {
 			if parsed := parseDateStrict(d); parsed != nil {
 				endDate = parsed
 			} else {
 				failed++
-				logMongoFail(ctx, p.MG, importRecordID, "user_plans", modelID, m, "bad end_date")
+				importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+					ImportRecordID: importRecordID,
+					ModelType:      modelType,
+					ModelID:        modelID,
+					Payload:        m,
+					Errors:         "bad end_date",
+				})
 				continue
 			}
-		} else {
-			endDate = nil
 		}
 
+		// --------------------------------
+		// 5. upsert
+		// --------------------------------
 		err = p.UserPlansRepo.UpdateOrCreate(ctx, models.UserPlan{
 			UserID:   uid,
 			Amount:   amount,
@@ -95,17 +136,42 @@ func (p *UserPlansProcessor) ProcessBatch(ctx context.Context, batch []map[strin
 		if err != nil {
 			failed++
 			log.Printf("[PROC][user_plans][ERR] row=%d username=%s err=%v", i, username, err)
-			logMongoFail(ctx, p.MG, importRecordID, "user_plans", modelID, m, err.Error())
+
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         err.Error(),
+			})
 			continue
 		}
 
+		// --------------------------------
+		// 6. success log
+		// --------------------------------
 		success++
-		logMongo(ctx, p.MG, importRecordID, "user_plans", modelID, m, "done", "")
+		importitems.LogMongo(ctx, p.MG, importitems.LogParams{
+			ImportRecordID: importRecordID,
+			ModelType:      modelType,
+			ModelID:        modelID,
+			Payload:        m,
+			Status:         "done",
+			Errors:         "",
+		})
 	}
 
+	// --------------------------------
+	// Итоговый лог
+	// --------------------------------
 	log.Printf("[PROC][user_plans][DONE] total=%d success=%d failed=%d", len(batch), success, failed)
+
+	// --------------------------------
+	// Обновление статуса import_record
+	// --------------------------------
 	if err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID); err != nil {
 		log.Printf("[PROC][user_plans][ERR] update import_record status: %v", err)
 	}
+
 	return nil
 }

@@ -36,21 +36,33 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 
 	success := 0
 	failed := 0
+
+	// importRecordID
 	var importRecordID string
 	if v := ctx.Value(ports.CtxImportRecordID); v != nil {
-		if s, ok := v.(string); ok {
-			importRecordID = strings.TrimSpace(s)
-		}
+		importRecordID, _ = v.(string)
+		importRecordID = strings.TrimSpace(importRecordID)
 	}
 
 	for i, m := range batch {
+
+		modelID := uuid.NewString()
 		iin := strings.TrimSpace(m["iin"])
 		if iin == "" {
 			failed++
-			logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "missing iin")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      p.Type(),
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         "missing iin",
+			})
 			continue
 		}
 
+		// ----------------------------------------------------
+		// 1. Создаём или обновляем Debtor
+		// ----------------------------------------------------
 		row := models.Debtor{
 			IIN:                         iin,
 			FullName:                    strings.TrimSpace(m["full_name"]),
@@ -69,13 +81,23 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 		if err != nil {
 			failed++
 			log.Printf("[PROC][debtors][ERR] row=%d iin=%s err=%v", i, iin, err)
-			logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, err.Error())
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      p.Type(),
+				ModelID:        modelID,
+				Payload:        m,
+				Errors:         err.Error(),
+			})
 			continue
 		}
 
+		// ----------------------------------------------------
+		// 2. Долги (debts)
+		// ----------------------------------------------------
 		if p.DebtsRepo != nil {
 			debtNumber := strings.TrimSpace(m["debt_number"])
 			if debtNumber != "" {
+
 				debtRow := models.Debt{
 					ID:               uuid.NewString(),
 					DebtorID:         &debtor.ID,
@@ -95,11 +117,20 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 
 				if err := p.DebtsRepo.UpdateOrCreate(ctx, debtRow); err != nil {
 					log.Printf("[PROC][debts][ERR] iin=%s debt_number=%s: %v", iin, debtNumber, err)
-					logMongoFail(ctx, p.MG, importRecordID, "debts", uuid.NewString(), m, err.Error())
+					importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+						ImportRecordID: importRecordID,
+						ModelType:      "debts",
+						ModelID:        debtRow.ID,
+						Payload:        m,
+						Errors:         err.Error(),
+					})
 				}
 			}
 		}
 
+		// ----------------------------------------------------
+		// 3. Addresses
+		// ----------------------------------------------------
 		if p.AddressesRepo != nil {
 			addresses := []struct {
 				key    string
@@ -109,24 +140,36 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 				{"fact_address", 2},
 				{"work_address", 3},
 			}
+
 			for _, a := range addresses {
 				addr := strings.TrimSpace(m[a.key])
 				if addr == "" {
 					continue
 				}
+
 				addrRow := models.Address{
 					DebtorID: debtor.ID,
 					IIN:      iin,
 					Address:  addr,
 					TypeID:   &a.typeID,
 				}
+
 				if err := p.AddressesRepo.SaveAddress(ctx, addrRow); err != nil {
 					log.Printf("[PROC][addresses][ERR] iin=%s type_id=%d: %v", iin, a.typeID, err)
-					logMongoFail(ctx, p.MG, importRecordID, "addresses", uuid.NewString(), m, err.Error())
+					importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+						ImportRecordID: importRecordID,
+						ModelType:      "addresses",
+						ModelID:        uuid.NewString(),
+						Payload:        m,
+						Errors:         err.Error(),
+					})
 				}
 			}
 		}
 
+		// ----------------------------------------------------
+		// 4. Phones
+		// ----------------------------------------------------
 		if p.PhonesRepo != nil {
 			phones := []struct {
 				key    string
@@ -153,11 +196,20 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 
 				if err := p.PhonesRepo.SavePhones(ctx, phoneRow); err != nil {
 					log.Printf("[PROC][phones][ERR] iin=%s phones=%s: %v", iin, raw, err)
-					logMongoFail(ctx, p.MG, importRecordID, "phones", uuid.NewString(), m, err.Error())
+					importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+						ImportRecordID: importRecordID,
+						ModelType:      "phones",
+						ModelID:        uuid.NewString(),
+						Payload:        m,
+						Errors:         err.Error(),
+					})
 				}
 			}
 		}
 
+		// ----------------------------------------------------
+		// 5. Contact person phones
+		// ----------------------------------------------------
 		if p.ContactPersonPhonesRepo != nil {
 			raw := strings.TrimSpace(m["contact_person_phones"])
 			if raw != "" {
@@ -167,33 +219,47 @@ func (p *DebtorsProcessor) ProcessBatch(ctx context.Context, batch []map[string]
 				}
 				if err := p.ContactPersonPhonesRepo.SaveContactPersonPhones(ctx, contactRow); err != nil {
 					log.Printf("[PROC][contact_phones][ERR] iin=%s value=%s: %v", iin, raw, err)
-					logMongoFail(ctx, p.MG, importRecordID, "contact_person_phones", uuid.NewString(), m, err.Error())
+					importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+						ImportRecordID: importRecordID,
+						ModelType:      "contact_person_phones",
+						ModelID:        uuid.NewString(),
+						Payload:        m,
+						Errors:         err.Error(),
+					})
 				}
 			}
 		}
 
-		status := "done"
+		// ----------------------------------------------------
+		// Успешная запись
+		// ----------------------------------------------------
 		success++
-
-		if _, err := importitems.InsertItem(ctx, p.MG, importitems.Item{
+		importitems.LogMongo(ctx, p.MG, importitems.LogParams{
 			ImportRecordID: importRecordID,
 			ModelType:      "debtors",
 			ModelID:        debtor.ID,
-			Payload:        mustJSON(m),
-			Status:         status,
+			Payload:        m,
+			Status:         "done",
 			Errors:         "",
-		}); err != nil {
-			log.Printf("[PROC][mongo][ERR] row=%d iin=%s: %v", i, iin, err)
-		}
+		})
 	}
 
+	// ----------------------------------------------------
+	// Итоговый лог
+	// ----------------------------------------------------
 	log.Printf("[PROC][debtors][DONE] total=%d success=%d failed=%d", len(batch), success, failed)
+
+	// ----------------------------------------------------
+	// Set import record status
+	// ----------------------------------------------------
 	if err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID); err != nil {
 		log.Printf("[PROC][debtors][ERR] update import_record status: %v", err)
 	}
 
 	return nil
 }
+
+// ---------------------- helpers ------------------------
 
 func parseDate(s string) *time.Time {
 	s = strings.TrimSpace(s)

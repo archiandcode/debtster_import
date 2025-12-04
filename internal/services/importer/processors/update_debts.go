@@ -39,7 +39,13 @@ func (p UpdateDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 	for i, m := range batch {
 		debtNumber := strings.TrimSpace(strings.ReplaceAll(m["debt_number"], " ", ""))
 		if debtNumber == "" {
-			logMongoFail(ctx, p.MG, importRecordID, debtsTable, "", m, "missing debt_number")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      debtsTable,
+				ModelID:        "",
+				Payload:        m,
+				Errors:         "missing debt_number",
+			})
 			continue
 		}
 
@@ -87,7 +93,13 @@ func (p UpdateDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 		}
 
 		if len(setParts) == 0 {
-			logMongoFail(ctx, p.MG, importRecordID, debtsTable, "", m, "no updatable fields found")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      debtsTable,
+				ModelID:        "",
+				Payload:        m,
+				Errors:         "no updatable fields found",
+			})
 			continue
 		}
 
@@ -98,19 +110,39 @@ func (p UpdateDebtsProcessor) ProcessBatch(ctx context.Context, batch []map[stri
 
 		ct, err := p.PG.Pool.Exec(ctx, query, args...)
 		if err != nil {
-			logMongo(ctx, p.MG, importRecordID, debtsTable, "", m, "failed", err.Error())
+			importitems.LogMongo(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      debtsTable,
+				ModelID:        "",
+				Payload:        m,
+				Status:         "failed",
+				Errors:         err.Error(),
+			})
 			log.Printf("[PROC][update_debts][WARN] row=%d update failed: %v", i, err)
 			continue
 		}
 
 		if ct.RowsAffected() == 0 {
-			logMongoFail(ctx, p.MG, importRecordID, debtsTable, "", m, "debt not found: "+debtNumber)
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      debtsTable,
+				ModelID:        "",
+				Payload:        m,
+				Errors:         "debt not found: " + debtNumber,
+			})
 			log.Printf("[PROC][update_debts][MISS] row=%d debt_number=%s not found", i, debtNumber)
 			continue
 		}
 
 		updated++
-		logMongo(ctx, p.MG, importRecordID, debtsTable, "", m, "done", "")
+		importitems.LogMongo(ctx, p.MG, importitems.LogParams{
+			ImportRecordID: importRecordID,
+			ModelType:      debtsTable,
+			ModelID:        "",
+			Payload:        m,
+			Status:         "done",
+			Errors:         "",
+		})
 	}
 
 	log.Printf("[PROC][update_debts][DONE] total=%d updated=%d", len(batch), updated)

@@ -37,6 +37,9 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 		p.UserRepo = database.NewUserRepo(p.PG)
 	}
 
+	// -----------------------------------------
+	// importRecordID
+	// -----------------------------------------
 	var importRecordID string
 	if v := ctx.Value(ports.CtxImportRecordID); v != nil {
 		if s, ok := v.(string); ok {
@@ -46,6 +49,9 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 
 	log.Printf("[PROC][payments][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
+	// -----------------------------------------
+	// Кэши
+	// -----------------------------------------
 	debtCache := make(map[string]*string)
 	userCache := make(map[string]*int64)
 
@@ -57,6 +63,9 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 
 	prepared := make([]preparedRow, 0, len(batch))
 
+	// -----------------------------------------
+	// 1. Валидация и подготовка записей
+	// -----------------------------------------
 	for _, m := range batch {
 		id := uuid.NewString()
 		v := func(key string) string { return strings.TrimSpace(m[key]) }
@@ -64,7 +73,13 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 		// ---------------------- debt ----------------------
 		debtNumber := v("debt_number")
 		if debtNumber == "" {
-			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing debt_number")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      "payments",
+				ModelID:        id,
+				Payload:        m,
+				Errors:         "missing debt_number",
+			})
 			continue
 		}
 
@@ -79,7 +94,14 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 				if err != nil {
 					msg += " (" + err.Error() + ")"
 				}
-				logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, msg)
+
+				importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+					ImportRecordID: importRecordID,
+					ModelType:      "payments",
+					ModelID:        id,
+					Payload:        m,
+					Errors:         msg,
+				})
 				continue
 			}
 			debtCache[debtNumber] = debtUUID
@@ -88,7 +110,13 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 		// ---------------------- user ----------------------
 		username := v("username")
 		if username == "" {
-			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing username")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      "payments",
+				ModelID:        id,
+				Payload:        m,
+				Errors:         "missing username",
+			})
 			continue
 		}
 
@@ -103,7 +131,14 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 				if err != nil {
 					msg += " (" + err.Error() + ")"
 				}
-				logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, msg)
+
+				importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+					ImportRecordID: importRecordID,
+					ModelType:      "payments",
+					ModelID:        id,
+					Payload:        m,
+					Errors:         msg,
+				})
 				continue
 			}
 			userCache[username] = userID
@@ -112,14 +147,26 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 		// ---------------------- date ----------------------
 		paymentDate := parseDateStrict(v("payment_date"))
 		if paymentDate == nil {
-			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "bad payment_date")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      "payments",
+				ModelID:        id,
+				Payload:        m,
+				Errors:         "bad payment_date",
+			})
 			continue
 		}
 
 		// ---------------------- amount ----------------------
 		amount := normalizeAmount(v("amount"))
 		if amount == "" || amount == "0" {
-			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing/zero amount")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      "payments",
+				ModelID:        id,
+				Payload:        m,
+				Errors:         "missing/zero amount",
+			})
 			continue
 		}
 
@@ -152,27 +199,51 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 		return nil
 	}
 
-	payments := make([]models.Payment, 0, len(prepared))
-	for _, pr := range prepared {
-		payments = append(payments, pr.payment)
+	// -----------------------------------------
+	// 2. Сохраняем батч
+	// -----------------------------------------
+	payments := make([]models.Payment, len(prepared))
+	for i, pr := range prepared {
+		payments[i] = pr.payment
 	}
 
 	errs := p.PayRepo.CreateBatch(ctx, payments)
 
+	// -----------------------------------------
+	// 3. Логирование результатов
+	// -----------------------------------------
 	inserted := 0
 	for i, pr := range prepared {
 		if errs != nil && errs[i] != nil {
-			logMongo(ctx, p.MG, importRecordID, "payments", pr.id, pr.payload, "failed", errs[i].Error())
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      "payments",
+				ModelID:        pr.id,
+				Payload:        pr.payload,
+				Errors:         errs[i].Error(),
+			})
 			continue
 		}
+
 		inserted++
-		logMongo(ctx, p.MG, importRecordID, "payments", pr.id, pr.payload, "done", "")
+		importitems.LogMongo(ctx, p.MG, importitems.LogParams{
+			ImportRecordID: importRecordID,
+			ModelType:      "payments",
+			ModelID:        pr.id,
+			Payload:        pr.payload,
+			Status:         "done",
+			Errors:         "",
+		})
 	}
 
 	log.Printf("[PROC][payments][DONE] total=%d inserted=%d", len(prepared), inserted)
 
+	// -----------------------------------------
+	// update import_record
+	// -----------------------------------------
 	if err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID); err != nil {
 		log.Printf("[PROC][payments][ERR] error change status: %v", err)
 	}
+
 	return nil
 }

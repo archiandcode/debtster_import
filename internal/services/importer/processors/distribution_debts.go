@@ -46,20 +46,26 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 	usersTable := "users"
 	teamsTable := "teams"
 	roleUserTable := "role_user"
-	appTeamName := defaultAppTeam
+	modelType := p.Type()
 
 	log.Printf("[PROC][redistribute][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
+	// ---------------------------------------------------------------------
+	// Получаем app team
+	// ---------------------------------------------------------------------
 	var appTeamID int64
 	if err := p.PG.Pool.QueryRow(ctx,
-		`SELECT id FROM `+teamsTable+` WHERE name = $1 LIMIT 1`, appTeamName,
+		`SELECT id FROM `+teamsTable+` WHERE name = $1 LIMIT 1`, defaultAppTeam,
 	).Scan(&appTeamID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("app team not found: %s", appTeamName)
+			return fmt.Errorf("app team not found: %s", defaultAppTeam)
 		}
 		return fmt.Errorf("lookup app team failed: %w", err)
 	}
 
+	// ---------------------------------------------------------------------
+	// Кэши для ускорения
+	// ---------------------------------------------------------------------
 	debtIDCache := make(map[string]*string)
 	userIDCache := make(map[string]*int64)
 	userRoleCache := make(map[int64]*int64)
@@ -75,33 +81,67 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 
 	rows := make([]row, 0, len(batch))
 
+	// ---------------------------------------------------------------------
+	// 1. Предобработка строк
+	// ---------------------------------------------------------------------
 	for _, m := range batch {
+		rowID := uuid.NewString()
+
 		debtNumber := strings.TrimSpace(m["debt_number"])
 		username := strings.TrimSpace(m["debt_username"])
 
 		if debtNumber == "" {
-			logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "missing debt_number")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        rowID,
+				Payload:        m,
+				Errors:         "missing debt_number",
+			})
 			continue
 		}
 		if username == "" {
-			logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "missing username")
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        rowID,
+				Payload:        m,
+				Errors:         "missing username",
+			})
 			continue
 		}
 
+		// ---------------------------------------------
+		// 1.1 Получаем debt_id
+		// ---------------------------------------------
 		var debtUUID *string
 		if v, ok := debtIDCache[debtNumber]; ok {
 			debtUUID = v
 		} else {
 			var uuidText string
-			if err := p.PG.Pool.QueryRow(ctx,
+			err := p.PG.Pool.QueryRow(ctx,
 				`SELECT id::text FROM `+debtsTable+` WHERE number = $1 LIMIT 1`, debtNumber,
-			).Scan(&uuidText); err != nil {
+			).Scan(&uuidText)
+
+			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					debtIDCache[debtNumber] = nil
-					logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "debt not found: "+debtNumber)
+					importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+						ImportRecordID: importRecordID,
+						ModelType:      modelType,
+						ModelID:        rowID,
+						Payload:        m,
+						Errors:         "debt not found: " + debtNumber,
+					})
 					continue
 				}
-				logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "debt lookup error: "+err.Error())
+				importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+					ImportRecordID: importRecordID,
+					ModelType:      modelType,
+					ModelID:        rowID,
+					Payload:        m,
+					Errors:         "debt lookup error: " + err.Error(),
+				})
 				continue
 			}
 			debtUUID = &uuidText
@@ -111,20 +151,37 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 			continue
 		}
 
+		// ---------------------------------------------
+		// 1.2 Получаем user_id
+		// ---------------------------------------------
 		var userID *int64
 		if v, ok := userIDCache[username]; ok {
 			userID = v
 		} else {
 			var id int64
-			if err := p.PG.Pool.QueryRow(ctx,
+			err := p.PG.Pool.QueryRow(ctx,
 				`SELECT id FROM `+usersTable+` WHERE username = $1 LIMIT 1`, username,
-			).Scan(&id); err != nil {
+			).Scan(&id)
+
+			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					userIDCache[username] = nil
-					logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "username not found: "+username)
+					importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+						ImportRecordID: importRecordID,
+						ModelType:      modelType,
+						ModelID:        rowID,
+						Payload:        m,
+						Errors:         "username not found: " + username,
+					})
 					continue
 				}
-				logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "user lookup error: "+err.Error())
+				importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+					ImportRecordID: importRecordID,
+					ModelType:      modelType,
+					ModelID:        rowID,
+					Payload:        m,
+					Errors:         "user lookup error: " + err.Error(),
+				})
 				continue
 			}
 			userID = &id
@@ -134,6 +191,9 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 			continue
 		}
 
+		// ---------------------------------------------
+		// 1.3 Получаем роль пользователя
+		// ---------------------------------------------
 		var roleID *int64
 		if cached, ok := userRoleCache[*userID]; ok {
 			roleID = cached
@@ -143,15 +203,29 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 				`SELECT role_id FROM `+roleUserTable+` WHERE user_id = $1 AND team_id = $2 LIMIT 1`,
 				*userID, appTeamID,
 			).Scan(&rid)
+
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					userRoleCache[*userID] = nil
-					logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "user has no role in app team")
+					importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+						ImportRecordID: importRecordID,
+						ModelType:      modelType,
+						ModelID:        rowID,
+						Payload:        m,
+						Errors:         "user has no role in app team",
+					})
 					continue
 				}
-				logMongoFail(ctx, p.MG, importRecordID, p.Type(), uuid.NewString(), m, "lookup app role failed: "+err.Error())
+				importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+					ImportRecordID: importRecordID,
+					ModelType:      modelType,
+					ModelID:        rowID,
+					Payload:        m,
+					Errors:         "lookup app role failed: " + err.Error(),
+				})
 				continue
 			}
+
 			roleID = &rid
 			userRoleCache[*userID] = roleID
 		}
@@ -161,7 +235,7 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 
 		now := time.Now()
 		rows = append(rows, row{
-			id:        uuid.NewString(),
+			id:        rowID,
 			payload:   m,
 			debtID:    debtUUID,
 			userID:    userID,
@@ -175,62 +249,89 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 		return nil
 	}
 
+	// ---------------------------------------------------------------------
+	// 2. Основная обработка строк
+	// ---------------------------------------------------------------------
 	fixed := 0
-	for i, r := range rows {
+
+	for _, r := range rows {
 		debtTeamName := debtTeamPrefix + *r.debtID
 
-		b := &pgx.Batch{}
-		b.Queue(
+		batch := &pgx.Batch{}
+		batch.Queue(
 			`UPDATE `+debtsTable+` d
 		     SET user_id = $2,
 		         user_assigned_at = (NOW() AT TIME ZONE 'Asia/Almaty')
-		     WHERE d.id = $1::uuid
-		       AND (d.user_id IS DISTINCT FROM $2)`,
+		     WHERE d.id = $1::uuid AND (d.user_id IS DISTINCT FROM $2)`,
 			r.debtID, r.userID,
 		)
-		b.Queue(
+		batch.Queue(
 			`INSERT INTO `+teamsTable+` (name) VALUES ($1)
 			 ON CONFLICT (name) DO NOTHING`,
 			debtTeamName,
 		)
-		b.Queue(
+		batch.Queue(
 			`SELECT id, name FROM `+teamsTable+` WHERE name = $1 LIMIT 1`,
 			debtTeamName,
 		)
 
-		br := p.PG.Pool.SendBatch(ctx, b)
+		br := p.PG.Pool.SendBatch(ctx, batch)
 
+		// 1) UPDATE debts
 		if _, err := br.Exec(); err != nil {
 			br.Close()
-			logMongo(ctx, p.MG, importRecordID, p.Type(), r.id, r.payload, "failed", "update debts: "+err.Error())
-			log.Printf("[PROC][redistribute][WARN] row=%d update debts failed: %v", i, err)
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        r.id,
+				Payload:        r.payload,
+				Errors:         "update debts: " + err.Error(),
+			})
 			continue
 		}
 
+		// 2) INSERT team
 		if _, err := br.Exec(); err != nil {
 			br.Close()
-			logMongo(ctx, p.MG, importRecordID, p.Type(), r.id, r.payload, "failed", "ensure team: "+err.Error())
-			log.Printf("[PROC][redistribute][WARN] row=%d ensure team failed: %v", i, err)
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        r.id,
+				Payload:        r.payload,
+				Errors:         "ensure team: " + err.Error(),
+			})
 			continue
 		}
 
+		// 3) SELECT team_id, name
 		var teamID int64
 		var teamName string
 		if err := br.QueryRow().Scan(&teamID, &teamName); err != nil {
 			br.Close()
-			logMongo(ctx, p.MG, importRecordID, p.Type(), r.id, r.payload, "failed", "select team_id: "+err.Error())
-			log.Printf("[PROC][redistribute][WARN] row=%d select team_id failed: %v", i, err)
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        r.id,
+				Payload:        r.payload,
+				Errors:         "select team_id: " + err.Error(),
+			})
 			continue
 		}
 		br.Close()
 
 		if !strings.HasPrefix(teamName, debtTeamPrefix) {
-			logMongo(ctx, p.MG, importRecordID, p.Type(), r.id, r.payload, "failed", "team name not debt/*: "+teamName)
-			log.Printf("[PROC][redistribute][SKIP] row=%d team(%d,%s) not debt/*", i, teamID, teamName)
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        r.id,
+				Payload:        r.payload,
+				Errors:         "team name not debt/*: " + teamName,
+			})
 			continue
 		}
 
-		if _, err := p.PG.Pool.Exec(ctx,
+		// Удаляем неправильные записи role_user
+		_, err := p.PG.Pool.Exec(ctx,
 			`DELETE FROM `+roleUserTable+` ru
 			   USING `+teamsTable+` tm, `+debtsTable+` d
 			 WHERE ru.team_id = tm.id
@@ -240,13 +341,20 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 			   AND ru.team_id <> $4
 			   AND (ru.user_id <> d.user_id OR (ru.user_id = d.user_id AND ru.role_id <> $3))`,
 			teamID, r.debtID, r.roleID, p.SystemTeamID,
-		); err != nil {
-			logMongo(ctx, p.MG, importRecordID, p.Type(), r.id, r.payload, "failed", "delete wrong role_user: "+err.Error())
-			log.Printf("[PROC][redistribute][WARN] row=%d delete role_user failed: %v", i, err)
+		)
+		if err != nil {
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        r.id,
+				Payload:        r.payload,
+				Errors:         "delete wrong role_user: " + err.Error(),
+			})
 			continue
 		}
 
-		if _, err := p.PG.Pool.Exec(ctx,
+		// Добавляем корректную запись role_user
+		_, err = p.PG.Pool.Exec(ctx,
 			`INSERT INTO `+roleUserTable+` (user_id, role_id, user_type, team_id)
 			   SELECT $1, $2, $4, $3
 			   WHERE NOT EXISTS (
@@ -254,14 +362,29 @@ func (p *DistributionDebtsProcessor) ProcessBatch(ctx context.Context, batch []m
 			      WHERE ru.user_id = $1 AND ru.role_id = $2 AND ru.team_id = $3
 			   )`,
 			r.userID, r.roleID, teamID, defaultUserType,
-		); err != nil {
-			logMongo(ctx, p.MG, importRecordID, p.Type(), r.id, r.payload, "failed", "insert correct role_user: "+err.Error())
-			log.Printf("[PROC][redistribute][WARN] row=%d insert role_user failed: %v", i, err)
+		)
+		if err != nil {
+			importitems.LogMongoFail(ctx, p.MG, importitems.LogParams{
+				ImportRecordID: importRecordID,
+				ModelType:      modelType,
+				ModelID:        r.id,
+				Payload:        r.payload,
+				Errors:         "insert correct role_user: " + err.Error(),
+			})
 			continue
 		}
 
 		fixed++
-		logMongo(ctx, p.MG, importRecordID, p.Type(), r.id, r.payload, "done", "")
+
+		// Успешная запись
+		importitems.LogMongo(ctx, p.MG, importitems.LogParams{
+			ImportRecordID: importRecordID,
+			ModelType:      modelType,
+			ModelID:        r.id,
+			Payload:        r.payload,
+			Status:         "done",
+			Errors:         "",
+		})
 	}
 
 	log.Printf("[PROC][redistribute][DONE] total=%d fixed=%d", len(rows), fixed)
