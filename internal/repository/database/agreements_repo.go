@@ -19,25 +19,54 @@ func NewAgreementRepo(pg *postgres.Postgres) *AgreementRepo {
 }
 
 func (r *AgreementRepo) UpdateOrCreate(ctx context.Context, a models.Agreement) (*models.Agreement, error) {
-	query := `
+
+	// ---------- 1) Пытаемся обновить ----------
+	updateQuery := `
+		UPDATE ` + r.table + `
+		SET 
+			agreement_type_id      = $2,
+			user_id                = $3,
+			amount_debt            = $4,
+			monthly_payment_amount = $5,
+			scheduled_payment_day  = $6,
+			start_date             = $7,
+			end_date               = $8,
+			updated_at             = NOW()
+		WHERE debt_id = $1::uuid
+		RETURNING 
+			id, agreement_type_id, debt_id, user_id, amount_debt,
+			monthly_payment_amount, scheduled_payment_day,
+			start_date, end_date, created_at, updated_at
+	`
+
+	var out models.Agreement
+	err := r.pg.Pool.QueryRow(ctx, updateQuery,
+		a.DebtID, a.AgreementTypeID, a.UserID, a.AmountDebt,
+		a.MonthlyPaymentAmount, a.ScheduledPaymentDay,
+		a.StartDate, a.EndDate,
+	).Scan(
+		&out.ID, &out.AgreementTypeID, &out.DebtID, &out.UserID,
+		&out.AmountDebt, &out.MonthlyPaymentAmount,
+		&out.ScheduledPaymentDay, &out.StartDate,
+		&out.EndDate, &out.CreatedAt, &out.UpdatedAt,
+	)
+
+	if err == nil {
+		// Успешно обновили
+		return &out, nil
+	}
+
+	// ---------- 2) Если не обновилось — делаем INSERT ----------
+	insertQuery := `
 		INSERT INTO ` + r.table + ` (
 			agreement_type_id, debt_id, user_id, amount_debt,
 			monthly_payment_amount, scheduled_payment_day,
 			start_date, end_date, created_at, updated_at
 		) VALUES (
-			$1, $2::uuid, $3, $4::numeric, $5::numeric,    
-			$6, $7::date, $8::date, COALESCE($9, NOW()),
-			NOW()
+			$1, $2::uuid, $3, $4::numeric, $5::numeric,
+			$6, $7::date, $8::date, 
+			COALESCE($9, NOW()), NOW()
 		)
-		ON CONFLICT (debt_id) DO UPDATE SET
-			agreement_type_id = EXCLUDED.agreement_type_id,
-			user_id = EXCLUDED.user_id,
-			amount_debt = EXCLUDED.amount_debt,
-			monthly_payment_amount = EXCLUDED.monthly_payment_amount,
-			scheduled_payment_day = EXCLUDED.scheduled_payment_day,
-			start_date = EXCLUDED.start_date,
-			end_date = EXCLUDED.end_date,
-			updated_at = NOW()
 		RETURNING
 			id, agreement_type_id, debt_id, user_id,
 			amount_debt, monthly_payment_amount,
@@ -45,20 +74,21 @@ func (r *AgreementRepo) UpdateOrCreate(ctx context.Context, a models.Agreement) 
 			end_date, created_at, updated_at
 	`
 
-	var out models.Agreement
-	err := r.pg.Pool.QueryRow(ctx, query,
+	err = r.pg.Pool.QueryRow(ctx, insertQuery,
 		a.AgreementTypeID, a.DebtID, a.UserID, a.AmountDebt,
 		a.MonthlyPaymentAmount, a.ScheduledPaymentDay,
 		a.StartDate, a.EndDate, a.CreatedAt,
 	).Scan(
-		&out.ID, &out.AgreementTypeID, &out.DebtID,
-		&out.UserID, &out.AmountDebt, &out.MonthlyPaymentAmount,
-		&out.ScheduledPaymentDay, &out.StartDate, &out.EndDate,
-		&out.CreatedAt, &out.UpdatedAt,
+		&out.ID, &out.AgreementTypeID, &out.DebtID, &out.UserID,
+		&out.AmountDebt, &out.MonthlyPaymentAmount,
+		&out.ScheduledPaymentDay, &out.StartDate,
+		&out.EndDate, &out.CreatedAt, &out.UpdatedAt,
 	)
+
 	if err != nil {
 		return nil, err
 	}
+
 	return &out, nil
 }
 

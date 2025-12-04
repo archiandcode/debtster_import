@@ -53,6 +53,11 @@ func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Pro
 	usersRepo := database.NewUserRepo(pg)
 	debtStatusesRepo := database.NewDebtStatusesRepo(pg)
 	actionRepo := database.NewActionRepo(pg)
+	payRepo := database.NewPaymentRepo(pg)
+	userPlanRepo := database.NewUserPlanRepo(pg)
+	execDocsRepo := database.NewExecutiveDocumentsRepo(pg)
+	enfProcRepo := database.NewEnforcementProceedingsRepo(pg)
+	agreementRepo := database.NewAgreementRepo(pg)
 
 	reg["import_actions"] = &processors.ActionsProcessor{
 		BaseProcessor:    base,
@@ -63,20 +68,31 @@ func initProcessors(pg *postgres.Postgres, mg *mongo.Mongo) map[string]ports.Pro
 	}
 
 	reg["import_agreements"] = &processors.AgreementsProcessor{
-		BaseProcessor: base,
+		BaseProcessor:  base,
+		AgreementsRepo: agreementRepo,
+		DebtsRepo:      debtsRepo,
+		UserRepo:       usersRepo,
 	}
 	reg["import_executive_documents"] = &processors.ExecutiveDocumentsProcessor{
 		BaseProcessor: base,
+		DebtsRepo:     debtsRepo,
+		ExecDocsRepo:  execDocsRepo,
 	}
 	reg["import_enforcement_proceedings"] = &processors.EnforcementProceedingsProcessor{
 		BaseProcessor: base,
+		DebtsRepo:     debtsRepo,
+		EnfProcRepo:   enfProcRepo,
 	}
 	reg["add_payments"] = &processors.PaymentsProcessor{
 		BaseProcessor: base,
+		DebtsRepo:     debtsRepo,
+		UserRepo:      usersRepo,
+		PayRepo:       payRepo,
 	}
 	reg["import_user_plans"] = &processors.UserPlansProcessor{
 		BaseProcessor: base,
-		UserPlansRepo: database.NewUserPlanRepo(pg),
+		UserPlansRepo: userPlanRepo,
+		UserRepo:      usersRepo,
 	}
 	reg["distribution_debts"] = &processors.DistributionDebtsProcessor{
 		BaseProcessor: base,

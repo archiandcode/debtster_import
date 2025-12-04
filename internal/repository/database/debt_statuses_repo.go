@@ -15,6 +15,7 @@ func NewDebtStatusesRepo(pg *postgres.Postgres) *DebtStatusesRepo {
 	return &DebtStatusesRepo{
 		pg:    pg,
 		table: "debt_statuses",
+		cache: make(map[string]*int64),
 	}
 }
 

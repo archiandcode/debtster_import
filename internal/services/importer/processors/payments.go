@@ -30,6 +30,12 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 	if p.PayRepo == nil {
 		p.PayRepo = database.NewPaymentRepo(p.PG)
 	}
+	if p.DebtsRepo == nil {
+		p.DebtsRepo = database.NewDebtsRepo(p.PG)
+	}
+	if p.UserRepo == nil {
+		p.UserRepo = database.NewUserRepo(p.PG)
+	}
 
 	var importRecordID string
 	if v := ctx.Value(ports.CtxImportRecordID); v != nil {
@@ -40,63 +46,87 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 
 	log.Printf("[PROC][payments][START] rows=%d import_record_id=%s", len(batch), importRecordID)
 
-	inserted := 0
+	debtCache := make(map[string]*string)
+	userCache := make(map[string]*int64)
+
+	type preparedRow struct {
+		id      string
+		payment models.Payment
+		payload map[string]string
+	}
+
+	prepared := make([]preparedRow, 0, len(batch))
 
 	for _, m := range batch {
 		id := uuid.NewString()
 		v := func(key string) string { return strings.TrimSpace(m[key]) }
 
-		// ---- debt_number → debt_id ----
+		// ---------------------- debt ----------------------
 		debtNumber := v("debt_number")
 		if debtNumber == "" {
 			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing debt_number")
 			continue
 		}
-		debtUUID, err := p.DebtsRepo.GetIDByNumber(ctx, debtNumber)
-		if err != nil || debtUUID == nil {
-			msg := "debt not found: " + debtNumber
-			if err != nil {
-				msg += " (" + err.Error() + ")"
+
+		var debtUUID *string
+		if cached, ok := debtCache[debtNumber]; ok {
+			debtUUID = cached
+		} else {
+			var err error
+			debtUUID, err = p.DebtsRepo.GetIDByNumber(ctx, debtNumber)
+			if err != nil || debtUUID == nil {
+				msg := "debt not found: " + debtNumber
+				if err != nil {
+					msg += " (" + err.Error() + ")"
+				}
+				logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, msg)
+				continue
 			}
-			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, msg)
-			continue
+			debtCache[debtNumber] = debtUUID
 		}
 
-		// ---- username → user_id ----
+		// ---------------------- user ----------------------
 		username := v("username")
 		if username == "" {
 			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing username")
 			continue
 		}
-		userID, err := p.UserRepo.GetUserBigint(ctx, username)
-		if err != nil || userID == nil {
-			msg := "username not found: " + username
-			if err != nil {
-				msg += " (" + err.Error() + ")"
+
+		var userID *int64
+		if cached, ok := userCache[username]; ok {
+			userID = cached
+		} else {
+			var err error
+			userID, err = p.UserRepo.GetUserBigint(ctx, username)
+			if err != nil || userID == nil {
+				msg := "username not found: " + username
+				if err != nil {
+					msg += " (" + err.Error() + ")"
+				}
+				logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, msg)
+				continue
 			}
-			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, msg)
-			continue
+			userCache[username] = userID
 		}
 
-		// ---- дата платежа ----
+		// ---------------------- date ----------------------
 		paymentDate := parseDateStrict(v("payment_date"))
 		if paymentDate == nil {
 			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "bad payment_date")
 			continue
 		}
 
-		// ---- сумма (обязательна и не 0) ----
+		// ---------------------- amount ----------------------
 		amount := normalizeAmount(v("amount"))
 		if amount == "" || amount == "0" {
 			logMongoFail(ctx, p.MG, importRecordID, "payments", id, m, "missing/zero amount")
 			continue
 		}
 
-		// Собираем модель
+		// ---------------------- model ----------------------
 		pay := models.Payment{
 			ID:     id,
 			DebtID: *debtUUID,
-			// т.к. в модели UserID == string
 			UserID: strconv.FormatInt(*userID, 10),
 
 			Amount:                       amount,
@@ -114,16 +144,32 @@ func (p *PaymentsProcessor) ProcessBatch(ctx context.Context, batch []map[string
 			Confirmed:   false,
 		}
 
-		if err := p.PayRepo.Create(ctx, pay); err != nil {
-			logMongo(ctx, p.MG, importRecordID, "payments", id, m, "failed", err.Error())
-			continue
-		}
-
-		inserted++
-		logMongo(ctx, p.MG, importRecordID, "payments", id, m, "done", "")
+		prepared = append(prepared, preparedRow{id: id, payment: pay, payload: m})
 	}
 
-	log.Printf("[PROC][payments][DONE] total=%d inserted=%d", len(batch), inserted)
+	if len(prepared) == 0 {
+		log.Printf("[PROC][payments][DONE] no valid rows")
+		return nil
+	}
+
+	payments := make([]models.Payment, 0, len(prepared))
+	for _, pr := range prepared {
+		payments = append(payments, pr.payment)
+	}
+
+	errs := p.PayRepo.CreateBatch(ctx, payments)
+
+	inserted := 0
+	for i, pr := range prepared {
+		if errs != nil && errs[i] != nil {
+			logMongo(ctx, p.MG, importRecordID, "payments", pr.id, pr.payload, "failed", errs[i].Error())
+			continue
+		}
+		inserted++
+		logMongo(ctx, p.MG, importRecordID, "payments", pr.id, pr.payload, "done", "")
+	}
+
+	log.Printf("[PROC][payments][DONE] total=%d inserted=%d", len(prepared), inserted)
 
 	if err := importitems.UpdateImportRecordStatusDone(ctx, p.MG, importRecordID); err != nil {
 		log.Printf("[PROC][payments][ERR] error change status: %v", err)
